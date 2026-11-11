@@ -194,6 +194,7 @@ def main() -> None:
     if not sess.get("portfolioId") and pid:
         sess["portfolioId"] = pid
 
+    SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
     SESSION_PATH.write_text(json.dumps(sess, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"已写入 {SESSION_PATH}")
     print("下一步：重启监听器（关闭 start.bat 窗口再打开，或重启后台进程）。")

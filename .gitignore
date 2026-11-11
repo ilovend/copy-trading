@@ -18,7 +18,9 @@ dist/
 probe/out/
 
 # ---- scratch / research scripts (contain local ids / router secret) ----
-probe/
+probe/*
+!probe/.gitkeep
+!probe/README.md
 gui/_*.py
 __pycache__/
 *.pyc
