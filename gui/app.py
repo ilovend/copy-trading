@@ -212,6 +212,11 @@ class App:
         self.cb_lev_mode.grid(row=4, column=1, sticky="w", pady=3)
         ttk.Label(acct, text="跟随模式下读不到带单员杠杆会回退到上面填的值",
                   foreground="#999").grid(row=4, column=2, sticky="w", padx=(8, 0))
+
+        self.var_manage_lev = tk.BooleanVar(value=bool(cfg.get("manage_leverage", True)))
+        ttk.Checkbutton(acct, text="下单前设置该币种杠杆（会改动账户全局设置）",
+                        variable=self.var_manage_lev).grid(row=5, column=0, columnspan=3,
+                                                           sticky="w", pady=(6, 0))
         self._cfg_entry(acct, 4, "单笔上限 (U)", "max_order_notional", cfg, "单笔名义不超过这个")
         self._cfg_entry(acct, 5, "总敞口上限 (U)", "max_total_notional", cfg, "所有持仓名义合计")
 
@@ -338,6 +343,7 @@ class App:
         cfg["min_notional_bump"] = bool(self.var_bump.get())
         cfg["mode"] = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
         cfg["leverage_mode"] = self._levmode_labels.get(self.cb_lev_mode.get(), "fixed")
+        cfg["manage_leverage"] = bool(self.var_manage_lev.get())
         path = ROOT / "gui" / "copy_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         self._append(f"复制配置已保存：{cfg['ratio_mode']} k={cfg['k']} "

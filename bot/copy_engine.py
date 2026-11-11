@@ -36,6 +36,7 @@ DEFAULTS = {
     "margin_per_trade": 5.0,
     "leverage": 20,
     "leverage_mode": "fixed",   # fixed | follow_lead
+    "manage_leverage": True,    # 下单前是否修改账户杠杆（会改全局设置）
     "max_order_notional": 10.0,
     "max_symbol_pct": 25.0,
     "max_total_notional": 40.0,
@@ -340,6 +341,8 @@ class CopyEngine:
         ex = self._exec()
         symbol = params["symbol"]
         lev = self._lev_plan.get(symbol) or self.cfg.get("leverage")
+        if not self.cfg.get("manage_leverage", True):
+            lev = None
         if lev and symbol not in self._lev_set:
             try:
                 ex.set_leverage(symbol, int(lev))
