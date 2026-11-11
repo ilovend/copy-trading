@@ -180,8 +180,12 @@ class CopyEngine:
             # 预热交易连接，避免第一笔信号卡在 TLS 握手
             if self.cfg.get("mode") in ("live", "live_dry"):
                 try:
-                    self._exec().account()
-                    log("执行账户连接预热完成")
+                    acc = self._exec().account()
+                    eq = float(acc.get("totalMarginBalance") or 0)
+                    hedge = self._is_hedge()
+                    log(f"执行账户：权益 {eq:.2f}U  持仓模式={'双向（带 positionSide）' if hedge else '单向（reduceOnly）'}")
+                    if eq <= 0:
+                        log("⚠ 合约钱包余额为 0，请先从现货划转，否则无法下单")
                 except Exception as e:  # noqa: BLE001
                     log(f"执行账户预热失败: {e}")
             try:

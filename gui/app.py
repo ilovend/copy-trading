@@ -439,6 +439,8 @@ class App:
                 mode_txt = "双向持仓" if info.get("hedge") else "单向持仓"
                 self.q.put(("log", f"连接成功：权益 {info['equity']:.2f}U  "
                                    f"可用 {info['available']:.2f}U  持仓 {info['positions']} 个"))
+                if info["equity"] <= 0:
+                    self.q.put(("log", "⚠ 合约钱包余额为 0，需要先从现货划转才能下单"))
                 self.q.put(("log", f"账户持仓模式：{mode_txt}"
                                    + ("（下单会自动带 positionSide）" if info.get("hedge")
                                       else "（平仓用 reduceOnly）")))
