@@ -242,8 +242,8 @@ class App:
         ttk.Checkbutton(acct, text="下单前设置该币种杠杆（会改动账户全局设置）",
                         variable=self.var_manage_lev).grid(row=5, column=0, columnspan=3,
                                                            sticky="w", pady=(6, 0))
-        self._cfg_entry(acct, 4, "单笔上限 (U)", "max_order_notional", cfg, "单笔名义不超过这个")
-        self._cfg_entry(acct, 5, "总敞口上限 (U)", "max_total_notional", cfg, "所有持仓名义合计")
+        self._cfg_entry(acct, 6, "单笔上限 (U)", "max_order_notional", cfg, "单笔名义不超过这个")
+        self._cfg_entry(acct, 7, "总敞口上限 (U)", "max_total_notional", cfg, "所有持仓名义合计")
 
         ratio = ttk.LabelFrame(parent, text="比例与风控", padding=12)
         ratio.pack(fill="x", pady=(12, 0))
@@ -267,12 +267,12 @@ class App:
         self._cfg_entry(ratio, 3, "单币仓位上限 %", "max_symbol_pct", cfg, "占执行权益的比例")
         self._cfg_entry(ratio, 4, "滑点上限 BTC/ETH %", "slippage_btc_eth_pct", cfg, "官方默认 0.5")
         self._cfg_entry(ratio, 5, "滑点上限 其他币 %", "slippage_default_pct", cfg, "官方默认 1.5")
-        self._cfg_entry(ratio, 8, "最小名义缓冲 %", "min_notional_buffer_pct", cfg,
+        self._cfg_entry(ratio, 7, "最小名义缓冲 %", "min_notional_buffer_pct", cfg,
                         "币安按浮点比较，5.00 常被判不足，默认留 1%")
 
         self.var_bump = tk.BooleanVar(value=bool(cfg.get("min_notional_bump", True)))
         ttk.Checkbutton(ratio, text="按比例算出来不足 5U 时，按 5U 最小名义下单",
-                        variable=self.var_bump).grid(row=7, column=0, columnspan=3,
+                        variable=self.var_bump).grid(row=6, column=0, columnspan=3,
                                                      sticky="w", pady=(8, 0))
 
         btns = ttk.Frame(parent)
