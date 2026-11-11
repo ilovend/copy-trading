@@ -201,12 +201,13 @@ class App:
         self._cfg_entry(ratio, 1, "系数 k", "k", cfg, "净值比/固定倍数用")
         self._cfg_entry(ratio, 2, "每笔保证金 (U)", "margin_per_trade", cfg, "固定保证金模式用")
         self._cfg_entry(ratio, 3, "单币仓位上限 %", "max_symbol_pct", cfg, "占执行权益的比例")
-        self._cfg_entry(ratio, 4, "滑点上限 %", "max_slippage_pct", cfg, "超过就跳过这笔")
-        self._cfg_entry(ratio, 5, "保护止损 %", "protective_stop_pct", cfg, "实盘时挂交易所止损，0=关闭")
+        self._cfg_entry(ratio, 4, "滑点上限 BTC/ETH %", "slippage_btc_eth_pct", cfg, "官方默认 0.5")
+        self._cfg_entry(ratio, 5, "滑点上限 其他币 %", "slippage_default_pct", cfg, "官方默认 1.5")
+        self._cfg_entry(ratio, 6, "保护止损 %", "protective_stop_pct", cfg, "实盘时挂交易所止损，0=关闭")
 
         self.var_bump = tk.BooleanVar(value=bool(cfg.get("min_notional_bump", True)))
         ttk.Checkbutton(ratio, text="按比例算出来不足 5U 时，按 5U 最小名义下单",
-                        variable=self.var_bump).grid(row=6, column=0, columnspan=3,
+                        variable=self.var_bump).grid(row=7, column=0, columnspan=3,
                                                      sticky="w", pady=(8, 0))
 
         btns = ttk.Frame(parent)
@@ -274,7 +275,8 @@ class App:
             "exec_equity": 50.0, "leverage": 20, "max_order_notional": 10.0,
             "max_total_notional": 50.0, "ratio_mode": "net_equity", "k": 1.0,
             "margin_per_trade": 5.0, "max_symbol_pct": 20.0,
-            "max_slippage_pct": 0.5, "protective_stop_pct": 2.0,
+            "max_slippage_pct": 0.5, "slippage_btc_eth_pct": 0.5,
+            "slippage_default_pct": 1.5, "protective_stop_pct": 2.0,
             "exec_api_key": "", "exec_api_secret": "",
         }
         p = ROOT / "gui" / "copy_config.json"

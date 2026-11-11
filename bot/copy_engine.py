@@ -38,7 +38,9 @@ DEFAULTS = {
     "max_order_notional": 10.0,
     "max_symbol_pct": 25.0,
     "max_total_notional": 40.0,
-    "max_slippage_pct": 0.5,
+    "max_slippage_pct": 0.5,          # 兼容旧字段
+    "slippage_btc_eth_pct": 0.5,      # 官方默认
+    "slippage_default_pct": 1.5,      # 官方对非主流币默认
     "max_signal_age_s": 3.0,
     "min_notional_bump": True,     # 比例算出来不够最小名义时，按最小名义下单
     "min_notional_usdt": 5.0,
@@ -155,6 +157,10 @@ class CopyEngine:
         return {"step": 0.001, "min_notional": 5.0, "tick": 0.0001}
 
     def _mirror_equity(self, portfolio: str) -> float:
+        """返回该组合的「跟单总投资额」（净投入），官方固定比例按这个算。
+
+        注意不是 marginBalance：后者含已实现盈亏，会随盈亏漂移。
+        """
         now = time.time()
         hit = self._equity_cache.get(portfolio)
         if hit and now - hit[0] < 60:
@@ -165,12 +171,17 @@ class CopyEngine:
             j = api("/bapi/futures/v1/private/future/copy-trade/copy-portfolio/detail-list", "GET")
             for row in j.get("data") or []:
                 if row.get("copyPortfolioId") == portfolio:
-                    eq = float(row.get("marginBalance") or 0)
+                    eq = float(row.get("netCopyAmount") or 0)
                     break
         except Exception as e:  # noqa: BLE001
             log(f"mirror equity failed: {e}")
         self._equity_cache[portfolio] = (now, eq)
         return eq
+
+    def _slippage_cap(self, symbol: str) -> float:
+        if symbol in ("BTCUSDT", "ETHUSDT"):
+            return self.cfg.get("slippage_btc_eth_pct", 0.5) * 100
+        return self.cfg.get("slippage_default_pct", 1.5) * 100
 
     def _exec_position(self, symbol: str, ps: str | None) -> float:
         """执行账户当前持仓。
@@ -356,10 +367,11 @@ class CopyEngine:
 
         # 开仓：不利滑点超过上限就放弃；有利滑点放行
         # 平仓：不拦（宁可滑点也要走掉），只在日志里标注
-        over = slip_bps > self.cfg["max_slippage_pct"] * 100
+        cap_bps = self._slippage_cap(symbol)
+        over = slip_bps > cap_bps
         if over and kind == "open":
             self._reject(sig, "slippage",
-                         f"不利滑点 {slip_bps:.1f}bps > {self.cfg['max_slippage_pct'] * 100:.0f}bps")
+                         f"不利滑点 {slip_bps:.1f}bps > {cap_bps:.1f}bps")
             return
         slip_note = "（平仓超滑点仍执行）" if over else ""
 
