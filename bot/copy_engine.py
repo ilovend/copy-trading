@@ -50,6 +50,7 @@ DEFAULTS = {
     "protective_stop_pct": 2.0,
     "push_intents": False,
     "exec_max_retry": 1,
+    "ioc_price_buffer_pct": 0.05,
 }
 
 
@@ -236,19 +237,37 @@ class CopyEngine:
 
     def _order_params(self, symbol: str, side: str, qty: float, kind: str,
                       price: float, book: dict) -> dict:
-        """IOC 限价：开仓按信号价让出滑点上限，平仓按对手价让出上限。"""
-        cap = self._slippage_cap(symbol) / 10000
-        ref = price
-        if kind == "close":
-            ref = book.get("exec_price") or price
-        px = ref * (1 + cap) if side == "BUY" else ref * (1 - cap)
+        """IOC 限价挂在对手价上，只留极小缓冲，保证成交且不偏离市场。
+
+        开仓和平仓同一套逻辑：
+            买入 → 卖一价 × (1 + buffer)
+            卖出 → 买一价 × (1 - buffer)
+        buffer 很小（默认 0.05%），只用来吃掉最后一跳。
+        是否「追价太狠」由前面的滑点闸门控制，不在这里放大。
+        """
+        buf = float(self.cfg.get("ioc_price_buffer_pct", 0.05)) / 100
+        best_bid = book.get("best_bid") or 0.0
+        best_ask = book.get("best_ask") or 0.0
+        if side == "BUY":
+            ref = best_ask or book.get("exec_price") or price
+            px = ref * (1 + buf)
+        else:
+            ref = best_bid or book.get("exec_price") or price
+            px = ref * (1 - buf)
         tick = self._symbol_filter(symbol)["tick"]
+        px = self._tick_round(px, tick)
+        # 买入向上取整、卖出向下取整，确保是「过价」而不是挂不上
+        if tick > 0:
+            if side == "BUY" and px < ref:
+                px = self._tick_round(ref + tick, tick)
+            elif side == "SELL" and px > ref:
+                px = self._tick_round(ref - tick, tick)
         return {
             "symbol": symbol,
             "side": side,
             "qty": qty,
             "type": "LIMIT",
-            "price": self._tick_round(px, tick),
+            "price": px,
             "timeInForce": "IOC",
             "reduceOnly": kind == "close",
         }
@@ -304,7 +323,8 @@ class CopyEngine:
         这种结果不能用来判断滑点，标记 reliable=False。
         """
         out = {"exec_price": 0.0, "filled": 0.0, "spread_bps": 0.0,
-               "dev_bps": 0.0, "reliable": False}
+               "dev_bps": 0.0, "reliable": False,
+               "best_bid": 0.0, "best_ask": 0.0}
         try:
             d = http_json(f"{FAPI}/fapi/v1/depth?symbol={symbol}&limit=50")
         except Exception as e:  # noqa: BLE001
@@ -317,6 +337,7 @@ class CopyEngine:
         best_bid, best_ask = bids[0][0], asks[0][0]
         mid = (best_bid + best_ask) / 2 or 0
         out["spread_bps"] = (best_ask - best_bid) / mid * 10000 if mid else 0.0
+        out["best_bid"], out["best_ask"] = best_bid, best_ask
 
         levels = asks if side == "BUY" else bids
         remain, cost, filled = qty, 0.0, 0.0
