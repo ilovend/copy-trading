@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""影子模式日报：看滑点、取整误差、被风控拒掉的比例。
+"""复制日报：看滑点、取整误差、被风控拒掉的比例。
 
 用法：
-    python bot/shadow_report.py            # 今天
-    python bot/shadow_report.py 20261111   # 指定日期
+    python bot/copy_report.py            # 今天
+    python bot/copy_report.py 20261111   # 指定日期
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def main() -> None:
         r = json.loads(line)
         (rejects if r.get("kind") == "reject" else intents).append(r)
 
-    print(f"=== {day} 影子日报 ===")
+    print(f"=== {day} 复制日报 ===")
     print(f"意图 {len(intents)} 笔，被拒 {len(rejects)} 笔")
 
     if intents:

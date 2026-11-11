@@ -305,12 +305,13 @@ def calibrate_clock() -> None:
     try:
         t0 = time.time() * 1000
         req = urllib.request.Request("https://fapi.binance.com/fapi/v1/time",
-                                     headers={"User-Agent": "probe/0.1"})
+                                     headers={"User-Agent": "copy-trading/0.1"})
         with urllib.request.urlopen(req, timeout=8) as r:
             server = json.loads(r.read().decode())["serverTime"]
         t1 = time.time() * 1000
         CLOCK_OFFSET_MS = server - (t0 + t1) / 2
-        log(f"clock offset vs binance: {CLOCK_OFFSET_MS:+.0f} ms")
+        from version import __version__
+        log(f"v{__version__} clock offset vs binance: {CLOCK_OFFSET_MS:+.0f} ms")
     except Exception as e:  # noqa: BLE001
         log(f"clock calibration failed: {e}")
 

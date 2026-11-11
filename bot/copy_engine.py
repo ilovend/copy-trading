@@ -40,7 +40,6 @@ DEFAULTS = {
     "max_order_notional": 10.0,
     "max_symbol_pct": 25.0,
     "max_total_notional": 40.0,
-    "max_slippage_pct": 0.5,          # 兼容旧字段
     "slippage_btc_eth_pct": 0.5,      # 官方默认
     "slippage_default_pct": 1.5,      # 官方对非主流币默认
     "max_signal_age_s": 8.0,
@@ -48,11 +47,6 @@ DEFAULTS = {
     "min_notional_usdt": 5.0,
     "min_notional_buffer_pct": 1.0,   # 币安按浮点比较，正好 5.00 常被判不足，留 1% 余量
     "agg_window_ms": 1500,
-    "open_order_type": "ioc_limit",
-    "close_order_type": "ioc_limit",
-    "protective_stop_pct": 2.0,
-    "push_intents": False,
-    "exec_max_retry": 1,
     "ioc_price_buffer_pct": 0.05,
 }
 
@@ -366,8 +360,7 @@ class CopyEngine:
     def _exec_position(self, symbol: str, ps: str | None) -> float:
         """执行账户当前持仓。
 
-        影子模式读本地台账；实盘要改成查 /fapi/v2/positionRisk，
-        在那之前宁可报错也不要拿假数据下单。
+        实盘查交易所持仓；影子/干跑用本地模拟台账。
         """
         if self.cfg.get("mode") == "live":
             try:

@@ -1,4 +1,4 @@
-# 币安跟单工具
+# 币安跟单工具 v0.1.0
 
 把币安「跟单交易」的成交事件实时接到本地：**监控 / 复制 / 推送 / 自动跟单**，带一个桌面控制台。
 
@@ -24,6 +24,8 @@ python -m pip install websockets
 copy .env.example .env
 python gui\启动.bat
 ```
+
+> 当前版本 v0.1.0，更新内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 首次使用三步：
 
@@ -54,11 +56,11 @@ python gui\启动.bat
 ```
 bot/
   listen_copy.py    WebSocket 监听 + 推 Telegram
-  shadow_copy.py    影子复制（监听 + 计算）
+  copy_run.py    复制运行器（影子/干跑/实盘）
   copy_engine.py    比例换算 / 风控 / 盘口滑点
   auto_join.py      名额监控 + 自动加入
   update_session.py 浏览器 cURL → 登录态
-  shadow_report.py  影子日报
+  copy_report.py  复制日报
 gui/
   app.py            桌面控制台（四页）
 docs/

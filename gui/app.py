@@ -28,7 +28,8 @@ from tkinter import messagebox, ttk
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bot"))
 
-import listen_copy as L  # noqa: E402
+import listen_copy as L
+from version import __version__ as VERSION  # noqa: E402
 
 STATE_PATH = ROOT / "gui" / "state.json"
 LOG_PATH = ROOT / "gui" / "gui.log"
@@ -53,7 +54,7 @@ class App:
 
     # ------------------------------------------------------------------ UI
     def _build(self) -> None:
-        self.root.title("币安跟单监听 · 控制台")
+        self.root.title(f"币安跟单工具 v{VERSION} · 控制台")
         self.root.geometry("1180x800")
         self.root.minsize(980, 660)
 
@@ -127,12 +128,12 @@ class App:
         box = ttk.LabelFrame(right, text="运行状态", padding=10)
         box.pack(fill="x")
         self.var_status = tk.StringVar(value="未运行")
-        self.var_shadow = tk.StringVar(value="未运行")
+        self.var_copy = tk.StringVar(value="未运行")
         self.var_join = tk.StringVar(value="未运行")
         self.var_tg = tk.StringVar()
         self.var_proxy = tk.StringVar()
         self.var_session = tk.StringVar()
-        for label, var in (("监控", self.var_status), ("复制", self.var_shadow),
+        for label, var in (("监控", self.var_status), ("复制", self.var_copy),
                            ("自动跟单", self.var_join), ("推送", self.var_tg),
                            ("代理", self.var_proxy), ("登录态", self.var_session)):
             row = ttk.Frame(box)
@@ -242,8 +243,6 @@ class App:
         self._cfg_entry(ratio, 3, "单币仓位上限 %", "max_symbol_pct", cfg, "占执行权益的比例")
         self._cfg_entry(ratio, 4, "滑点上限 BTC/ETH %", "slippage_btc_eth_pct", cfg, "官方默认 0.5")
         self._cfg_entry(ratio, 5, "滑点上限 其他币 %", "slippage_default_pct", cfg, "官方默认 1.5")
-        self._cfg_entry(ratio, 6, "保护止损 %", "protective_stop_pct", cfg, "实盘时挂交易所止损，0=关闭")
-
         self._cfg_entry(ratio, 8, "最小名义缓冲 %", "min_notional_buffer_pct", cfg,
                         "币安按浮点比较，5.00 常被判不足，默认留 1%")
 
@@ -256,7 +255,7 @@ class App:
         btns.pack(fill="x", pady=(14, 0))
         ttk.Button(btns, text="保存配置", command=self.save_copy_cfg).pack(side="left")
         ttk.Button(btns, text="测试连接", command=self.test_exec).pack(side="left", padx=8)
-        ttk.Button(btns, text="查看今日日报", command=self.show_shadow_report).pack(side="left")
+        ttk.Button(btns, text="查看今日日报", command=self.show_report).pack(side="left")
 
         self.var_mode_hint = tk.StringVar(value="")
         ttk.Label(parent, textvariable=self.var_mode_hint,
@@ -338,8 +337,7 @@ class App:
             "exec_equity": 50.0, "leverage": 20, "max_order_notional": 10.0,
             "max_total_notional": 50.0, "ratio_mode": "net_equity", "k": 1.0,
             "margin_per_trade": 5.0, "max_symbol_pct": 20.0,
-            "max_slippage_pct": 0.5, "slippage_btc_eth_pct": 0.5,
-            "slippage_default_pct": 1.5, "protective_stop_pct": 2.0,
+            "slippage_btc_eth_pct": 0.5, "slippage_default_pct": 1.5,
         }
         p = ROOT / "gui" / "copy_config.json"
         if p.exists():
@@ -459,12 +457,12 @@ class App:
         copied = [i for i in ids if i in self.copied]
         self._save_copy_targets(copied)
         if copied:
-            self.start_job("shadow", ids=ids, script="shadow_copy.py")
+            self.start_job("copy", ids=ids, script="copy_run.py")
         else:
             self.start_job("monitor", ids=ids)
 
     def stop_session(self) -> None:
-        self.stop_job("shadow")
+        self.stop_job("copy")
         self.stop_job("monitor")
 
     def _save_copy_targets(self, copied_ids: list[str]) -> None:
@@ -538,9 +536,9 @@ class App:
 
         threading.Thread(target=work, daemon=True).start()
 
-    def show_shadow_report(self) -> None:
+    def show_report(self) -> None:
         def work() -> None:
-            p = subprocess.run([PY, str(ROOT / "bot" / "shadow_report.py")],
+            p = subprocess.run([PY, str(ROOT / "bot" / "copy_report.py")],
                                cwd=str(ROOT), capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=30)
             self.q.put(("log", "── 复制日报 ──"))
@@ -821,7 +819,7 @@ class App:
 
     # --------------------------------------------------------------- data
     def refresh(self) -> None:
-        if self._alive("monitor") or self._alive("shadow"):
+        if self._alive("monitor") or self._alive("copy"):
             messagebox.showinfo("提示", "监听正在运行，先停止再刷新列表")
             return
         self._append("读取跟单列表…", "info")
@@ -864,7 +862,7 @@ class App:
             return []
 
     # ------------------------------------------------------------ process
-    JOB_LABEL = {"monitor": "监控", "shadow": "复制", "autojoin": "跟单"}
+    JOB_LABEL = {"monitor": "监控", "copy": "复制", "autojoin": "跟单"}
 
     def _alive(self, name: str) -> bool:
         proc = self.jobs.get(name)
@@ -876,7 +874,7 @@ class App:
             messagebox.showinfo("提示", f"{self.JOB_LABEL[name]}已经在运行了")
             return
 
-        other = {"monitor": "shadow", "shadow": "monitor"}.get(name)
+        other = {"monitor": "copy", "copy": "monitor"}.get(name)
         if other and self._alive(other):
             if not messagebox.askokcancel(
                     "冲突",
@@ -907,7 +905,7 @@ class App:
 
         self.jobs[name] = proc
         self._refresh_job_status()
-        if name == "shadow":
+        if name == "copy":
             mode_label = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
             extra = {"shadow": "影子", "live_dry": "干跑", "live": "实盘"}[mode_label]
             self._append(f"启动复制（{extra}）："
@@ -962,7 +960,7 @@ class App:
 
     def _refresh_job_status(self) -> None:
         self.var_status.set("运行中" if self._alive("monitor") else "未运行")
-        self.var_shadow.set("运行中" if self._alive("shadow") else "未运行")
+        self.var_copy.set("运行中" if self._alive("copy") else "未运行")
         self.var_join.set("运行中" if self._alive("autojoin") else "未运行")
 
     # ------------------------------------------------------------- push
