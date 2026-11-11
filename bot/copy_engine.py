@@ -14,11 +14,11 @@
 """
 from __future__ import annotations
 
+import http.client
 import json
 import queue
 import threading
 import time
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -29,7 +29,7 @@ CONFIG_PATH = ROOT / "gui" / "copy_config.json"
 FAPI = "https://fapi.binance.com"
 
 DEFAULTS = {
-    "mode": "shadow",
+    "mode": "shadow",            # shadow | live_dry | live
     "ratio_mode": "net_equity",
     "k": 1.0,
     "exec_equity": 50.0,
@@ -49,6 +49,7 @@ DEFAULTS = {
     "close_order_type": "ioc_limit",
     "protective_stop_pct": 2.0,
     "push_intents": False,
+    "exec_max_retry": 1,
 }
 
 
@@ -66,10 +67,35 @@ def load_config() -> dict:
     return cfg
 
 
+_PUB_CONN: http.client.HTTPSConnection | None = None
+
+
 def http_json(url: str, timeout: int = 10):
-    req = urllib.request.Request(url, headers={"User-Agent": "copy-engine/0.2"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    """公开接口也复用连接，避免每次 TLS 握手（0.7s → 0.1s）。"""
+    global _PUB_CONN
+    path = url.replace("https://fapi.binance.com", "")
+    last: Exception | None = None
+    for _ in range(2):
+        try:
+            if _PUB_CONN is None:
+                _PUB_CONN = http.client.HTTPSConnection("fapi.binance.com", timeout=timeout)
+            _PUB_CONN.request("GET", path, headers={"User-Agent": "copy-engine/0.3",
+                                                    "Connection": "keep-alive"})
+            resp = _PUB_CONN.getresponse()
+            raw = resp.read()
+            if resp.getheader("connection", "").lower() == "close":
+                _PUB_CONN.close()
+                _PUB_CONN = None
+            return json.loads(raw.decode())
+        except Exception as e:  # noqa: BLE001
+            last = e
+            try:
+                if _PUB_CONN:
+                    _PUB_CONN.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _PUB_CONN = None
+    raise RuntimeError(f"request failed: {last}")
 
 
 class CopyEngine:
@@ -148,6 +174,17 @@ class CopyEngine:
                 self._filters[s["symbol"]] = info
             self._filters_ready = True
             log(f"exchangeInfo 预热完成（{len(self._filters)} 个交易对）")
+            # 预热交易连接，避免第一笔信号卡在 TLS 握手
+            if self.cfg.get("mode") in ("live", "live_dry"):
+                try:
+                    self._exec().account()
+                    log("执行账户连接预热完成")
+                except Exception as e:  # noqa: BLE001
+                    log(f"执行账户预热失败: {e}")
+            try:
+                http_json(f"{FAPI}/fapi/v1/depth?symbol=BTCUSDT&limit=5")
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as e:  # noqa: BLE001
             log(f"exchangeInfo 预热失败（首单会慢）: {e}")
 
@@ -183,14 +220,65 @@ class CopyEngine:
             return self.cfg.get("slippage_btc_eth_pct", 0.5) * 100
         return self.cfg.get("slippage_default_pct", 1.5) * 100
 
+    def _exec(self):
+        if getattr(self, "_ex", None) is None:
+            from exec_client import ExecClient
+            self._ex = ExecClient()
+            self._lev_set = set()
+        return self._ex
+
+    @staticmethod
+    def _tick_round(price: float, tick: float) -> float:
+        if tick <= 0:
+            return price
+        n = round(price / tick)
+        return round(n * tick, 10)
+
+    def _order_params(self, symbol: str, side: str, qty: float, kind: str,
+                      price: float, book: dict) -> dict:
+        """IOC 限价：开仓按信号价让出滑点上限，平仓按对手价让出上限。"""
+        cap = self._slippage_cap(symbol) / 10000
+        ref = price
+        if kind == "close":
+            ref = book.get("exec_price") or price
+        px = ref * (1 + cap) if side == "BUY" else ref * (1 - cap)
+        tick = self._symbol_filter(symbol)["tick"]
+        return {
+            "symbol": symbol,
+            "side": side,
+            "qty": qty,
+            "type": "LIMIT",
+            "price": self._tick_round(px, tick),
+            "timeInForce": "IOC",
+            "reduceOnly": kind == "close",
+        }
+
+    def _send_order(self, params: dict) -> dict:
+        ex = self._exec()
+        symbol = params["symbol"]
+        lev = self.cfg.get("leverage")
+        if lev and symbol not in self._lev_set:
+            try:
+                ex.set_leverage(symbol, int(lev))
+                self._lev_set.add(symbol)
+            except Exception as e:  # noqa: BLE001
+                log(f"set leverage failed {symbol}: {e}")
+        return ex.order(symbol, params["side"], params["qty"],
+                        order_type=params["type"], price=params["price"],
+                        time_in_force=params["timeInForce"],
+                        reduce_only=params["reduceOnly"])
+
     def _exec_position(self, symbol: str, ps: str | None) -> float:
         """执行账户当前持仓。
 
         影子模式读本地台账；实盘要改成查 /fapi/v2/positionRisk，
         在那之前宁可报错也不要拿假数据下单。
         """
-        if self.cfg.get("mode") == "live":
-            raise RuntimeError("live 模式尚未接持仓查询，禁止静默下单")
+        if self.cfg.get("mode") in ("live", "live_dry"):
+            try:
+                return self._exec().position(symbol, ps)
+            except Exception as e:  # noqa: BLE001
+                raise RuntimeError(f"查询持仓失败: {e}") from None
         return self._pos.get((symbol, ps or "BOTH"), 0.0)
 
     @staticmethod
@@ -387,6 +475,29 @@ class CopyEngine:
             self._reject(sig, "total_cap", f"总敞口 {total_after:.1f}U")
             return
 
+        mode_cfg = self.cfg.get("mode", "shadow")
+        order_params = None
+        order_resp = None
+        if mode_cfg in ("live_dry", "live"):
+            order_params = self._order_params(symbol, side, qty_target, kind, price, book)
+            log(f"ORDER {'SEND' if mode_cfg == 'live' else 'DRY '} {symbol} {side} "
+                f"qty={order_params['qty']:g} px={order_params['price']:g} "
+                f"{order_params['type']}/{order_params['timeInForce']}"
+                f"{' reduceOnly' if order_params['reduceOnly'] else ''}")
+            if mode_cfg == "live":
+                try:
+                    order_resp = self._send_order(order_params)
+                except Exception as e:  # noqa: BLE001
+                    self._reject(sig, "order_failed", str(e)[:180])
+                    return
+                filled = float(order_resp.get("executedQty") or 0)
+                if filled <= 0:
+                    self._reject(sig, "unfilled",
+                                 f"订单未成交 status={order_resp.get('status')}")
+                    return
+                log(f"ORDER DONE id={order_resp.get('orderId')} "
+                    f"filled={filled:g} avg={order_resp.get('avgPrice')}")
+
         self._pos[(symbol, ps or "BOTH")] = after_pos
         self._exposure[symbol] = self._exposure.get(symbol, 0.0) + (notional if kind == "open" else -notional)
         self._total_exposure = max(0.0, total_after)
@@ -415,7 +526,11 @@ class CopyEngine:
             "held_after": round(after_pos, 8),
             "bumped": bumped,
             "close_frac": round(frac, 4),
-            "mode": "shadow",
+            "mode": mode_cfg,
+            "order": order_params,
+            "order_resp": ({k: order_resp.get(k) for k in
+                            ("orderId", "status", "executedQty", "avgPrice")}
+                           if order_resp else None),            # shadow | live_dry | live
         }
         with (DATA / f"intents-{datetime.now():%Y%m%d}.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")

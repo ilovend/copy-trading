@@ -172,6 +172,26 @@ class App:
             "改完参数点「保存配置」，再点「启动影子复制」。"
         )).pack(anchor="w", pady=(2, 10))
 
+        mode_box = ttk.LabelFrame(parent, text="运行模式", padding=10)
+        mode_box.pack(fill="x", pady=(0, 10))
+        self._mode_labels = {
+            "影子：只计算、只记录，不碰交易所": "shadow",
+            "干跑：打印订单参数，但不发送": "live_dry",
+            "实盘：真实下单（请先小资金验证）": "live",
+        }
+        self.var_exec_mode = tk.StringVar()
+        cur_mode = cfg.get("mode", "shadow")
+        self.cb_exec_mode = ttk.Combobox(mode_box, values=list(self._mode_labels),
+                                         state="readonly", width=42)
+        self.cb_exec_mode.set(next((k for k, v in self._mode_labels.items() if v == cur_mode),
+                                   list(self._mode_labels)[0]))
+        self.cb_exec_mode.grid(row=0, column=0, sticky="w")
+        self.cb_exec_mode.bind("<<ComboboxSelected>>", self._on_exec_mode_change)
+        self.var_exec_warn = tk.StringVar(value="")
+        ttk.Label(mode_box, textvariable=self.var_exec_warn, foreground="#c0392b",
+                  justify="left").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self._refresh_exec_warn()
+
         acct = ttk.LabelFrame(parent, text="执行账户", padding=12)
         acct.pack(fill="x")
         self._cfg_entry(acct, 0, "API Key", "exec_api_key", cfg, "接入实盘时填（当前不用）", show="*")
@@ -302,6 +322,7 @@ class App:
                 return
         cfg["ratio_mode"] = self._ratio_labels.get(self.cb_ratio.get(), "net_equity")
         cfg["min_notional_bump"] = bool(self.var_bump.get())
+        cfg["mode"] = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
         path = ROOT / "gui" / "copy_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         self._append(f"复制配置已保存：{cfg['ratio_mode']} k={cfg['k']} "
@@ -368,6 +389,26 @@ class App:
         cfg["targets"] = {pid: {"enabled": pid in copied_ids} for pid in self.monitored}
         (ROOT / "gui" / "copy_config.json").write_text(
             json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _on_exec_mode_change(self, _event=None) -> None:
+        target = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
+        if target == "live":
+            if not messagebox.askokcancel(
+                    "确认实盘",
+                    "即将开启真实下单。\n\n"
+                    "第一周建议：单笔 ≤5U、日亏 ≤5U、只跟 1 个带单员。\n"
+                    "确认要切到实盘模式吗？"):
+                self.cb_exec_mode.set(list(self._mode_labels)[0])
+        self._refresh_exec_warn()
+
+    def _refresh_exec_warn(self) -> None:
+        target = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
+        if target == "shadow":
+            self.var_exec_warn.set("")
+        elif target == "live_dry":
+            self.var_exec_warn.set("干跑模式：日志里会打印完整订单参数，但不会发送。")
+        else:
+            self.var_exec_warn.set("⚠ 实盘模式：会真实下单扣款，先用 5U 验证。")
 
     def test_exec(self) -> None:
         key = self.copy_vars["exec_api_key"].get().strip()
