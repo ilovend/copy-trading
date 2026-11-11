@@ -273,6 +273,12 @@ def set_signal_hook(fn) -> None:
     SIGNAL_HOOK = fn
 
 
+async def clock_loop() -> None:
+    while True:
+        await asyncio.sleep(600)
+        await asyncio.to_thread(calibrate_clock)
+
+
 def calibrate_clock() -> None:
     """Measure local-clock offset against Binance server time.
 
@@ -411,6 +417,7 @@ async def stream_portfolio(pf: dict) -> None:
 async def run(cli_tokens: list[str] | None = None, dry_run: bool = False) -> None:
     load_session()
     await asyncio.to_thread(calibrate_clock)
+    asyncio.create_task(clock_loop())
     all_pf = await asyncio.to_thread(discover_portfolios)
     if not all_pf:
         sys.exit("no copy portfolio found")
