@@ -40,6 +40,8 @@ DEFAULTS = {
     "max_total_notional": 40.0,
     "max_slippage_pct": 0.5,
     "max_signal_age_s": 3.0,
+    "min_notional_bump": True,     # 比例算出来不够最小名义时，按最小名义下单
+    "min_notional_usdt": 5.0,
     "agg_window_ms": 1500,
     "open_order_type": "ioc_limit",
     "close_order_type": "ioc_limit",
@@ -78,6 +80,7 @@ class CopyEngine:
         self._exposure: dict[str, float] = {}
         self._total_exposure = 0.0
         self._pos: dict[tuple[str, str], float] = {}
+        self._mirror_pos: dict[tuple[str, str], float] = {}
         self._pending: dict[tuple, dict] = {}
         self._day = datetime.now().date()
         self._stats = {"signals": 0, "intents": 0, "rejected": 0}
@@ -277,24 +280,61 @@ class CopyEngine:
         if price > 0:
             qty_target = min(qty_target, self.cfg["max_order_notional"] / price)
 
+        key = (symbol, ps or "BOTH")
+        mirror_before = self._mirror_pos.get(key, 0.0)
+        sign = 1 if side == "BUY" else -1
+        frac = 0.0
+        if kind == "close":
+            denom = abs(mirror_before)
+            frac = min(1.0, qty_mirror / denom) if denom > 0 else 1.0
+        # 镜像仓位台账：无论我们跟不跟，信号源的仓位都在变
+        self._mirror_pos[key] = mirror_before + sign * qty_mirror
+
         try:
             held = self._exec_position(symbol, ps)
         except Exception as e:  # noqa: BLE001
             self._reject(sig, "no_position_api", str(e))
             return
+
+        bumped = False
         if kind == "close":
             if abs(held) <= 1e-12:
                 self._reject(sig, "no_position", "执行账户没有该仓位，跳过平仓")
                 return
-            qty_target = min(qty_target, abs(held))
+            mn = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
+            if frac >= 0.999:
+                # 镜像整仓平，执行端也整仓平（不受最小名义限制）
+                qty_target = abs(held)
+            else:
+                qty_target = min(abs(held), abs(held) * frac)
+                if qty_target * price < mn:
+                    if abs(held) * price < mn * 2:
+                        # 仓位本来就很碎，拆开平会低于最小名义，索性整仓平掉
+                        qty_target = abs(held)
+                    else:
+                        self._reject(sig, "too_small_partial",
+                                     f"部分平仓 {qty_target * price:.2f}U < {mn}U"
+                                     f"（仓位仍有 {abs(held) * price:.2f}U）")
+                        return
+        else:
+            min_notional = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
+            cur_notional = qty_target * price
+            if cur_notional < min_notional and self.cfg.get("min_notional_bump", True):
+                bump_qty = min_notional / price if price > 0 else 0.0
+                bump_qty = min(bump_qty, self.cfg["max_order_notional"] / price) if price > 0 else bump_qty
+                qty_target = max(qty_target, bump_qty)
+                bumped = True
 
-        # 平仓向上取整，避免留下残仓；开仓向下取整，宁可少开
+        # 平仓向上取整避免残仓；开仓默认向下，但补到最小名义时向上
         if kind == "close":
             qty_target = self._ceil_step(min(qty_target, abs(held)), flt["step"])
+        elif bumped:
+            qty_target = self._ceil_step(qty_target, flt["step"])
         else:
             qty_target = self._floor_step(qty_target, flt["step"])
         notional = qty_target * price
-        if qty_target <= 0 or notional < flt["min_notional"]:
+        full_close = kind == "close" and frac >= 0.999
+        if qty_target <= 0 or (notional < flt["min_notional"] and not full_close):
             self._reject(sig, "too_small",
                          f"目标 {qty_target} 名义 {notional:.2f} < minNotional {flt['min_notional']}")
             return
@@ -361,6 +401,8 @@ class CopyEngine:
             "dev_bps": round(book["dev_bps"], 1),
             "age_ms": age_ms,
             "held_after": round(after_pos, 8),
+            "bumped": bumped,
+            "close_frac": round(frac, 4),
             "mode": "shadow",
         }
         with (DATA / f"intents-{datetime.now():%Y%m%d}.jsonl").open("a", encoding="utf-8") as f:
@@ -369,7 +411,9 @@ class CopyEngine:
         log(f"SHADOW {kind.upper():5s} {symbol:10s} {side:4s} "
             f"mirror={qty_mirror:<10g} target={qty_target:<10g} "
             f"px={price:<10g} est={exec_price:<10g} slip={slip_bps:+.1f}bps "
-            f"notional={notional:.2f}U hold={after_pos:g}{slip_note}")
+            f"notional={notional:.2f}U hold={after_pos:g}"
+            f"{' [补到最小名义]' if bumped else ''}"
+            f"{f' [平仓{frac*100:.0f}%]' if kind == 'close' else ''}{slip_note}")
 
     def _reject(self, sig: dict, reason: str, detail: str) -> None:
         self._stats["rejected"] += 1

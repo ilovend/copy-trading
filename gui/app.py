@@ -204,6 +204,11 @@ class App:
         self._cfg_entry(ratio, 4, "滑点上限 %", "max_slippage_pct", cfg, "超过就跳过这笔")
         self._cfg_entry(ratio, 5, "保护止损 %", "protective_stop_pct", cfg, "实盘时挂交易所止损，0=关闭")
 
+        self.var_bump = tk.BooleanVar(value=bool(cfg.get("min_notional_bump", True)))
+        ttk.Checkbutton(ratio, text="按比例算出来不足 5U 时，按 5U 最小名义下单",
+                        variable=self.var_bump).grid(row=6, column=0, columnspan=3,
+                                                     sticky="w", pady=(8, 0))
+
         btns = ttk.Frame(parent)
         btns.pack(fill="x", pady=(14, 0))
         ttk.Button(btns, text="保存配置", command=self.save_copy_cfg).pack(side="left")
@@ -237,7 +242,8 @@ class App:
         if mode == "net_equity":
             self.var_mode_hint.set(
                 "净值比：手数 = 镜像数量 × (执行权益 ÷ 该组合保证金余额) × k。"
-                "只用到「系数 k」，「每笔保证金」和「杠杆」不参与计算。")
+                "只用到「系数 k」，「每笔保证金」和「杠杆」不参与计算。"
+                "比例算出来不足 5U 时，会按 5U 最小名义下单（可关）。")
         elif mode == "fixed_multiple":
             self.var_mode_hint.set(
                 "固定倍数：手数 = 镜像数量 × k。只用到「系数 k」，跟两边资金多少无关。")
@@ -292,6 +298,7 @@ class App:
                 messagebox.showwarning("格式错误", f"{key} 需要一个数字，当前是 {raw!r}")
                 return
         cfg["ratio_mode"] = self._ratio_labels.get(self.cb_ratio.get(), "net_equity")
+        cfg["min_notional_bump"] = bool(self.var_bump.get())
         path = ROOT / "gui" / "copy_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         self._append(f"复制配置已保存：{cfg['ratio_mode']} k={cfg['k']} "
