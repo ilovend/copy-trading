@@ -453,6 +453,8 @@ class App:
         cfg = self._load_copy_cfg()
         cfg["monitored"] = sorted(self.monitored)
         cfg["targets"] = {pid: {"enabled": pid in copied_ids} for pid in self.monitored}
+        cfg.pop("exec_api_key", None)
+        cfg.pop("exec_api_secret", None)
         (ROOT / "gui" / "copy_config.json").write_text(
             json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -502,6 +504,8 @@ class App:
                 from exec_client import ExecClient
                 info = ExecClient(key, secret).test()
                 mode_txt = "双向持仓" if info.get("hedge") else "单向持仓"
+                fp = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "****"
+                self.q.put(("log", f"当前使用的 Key：{fp}"))
                 self.q.put(("log", f"连接成功：权益 {info['equity']:.2f}U  "
                                    f"可用 {info['available']:.2f}U  持仓 {info['positions']} 个"))
                 if info["equity"] <= 0:
