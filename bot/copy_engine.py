@@ -218,7 +218,9 @@ class CopyEngine:
             return hit[1]
         eq = 0.0
         try:
-            from listen_copy import api
+            from listen_copy import api, load_session, SESSION
+            if not SESSION:
+                load_session()
             j = api("/bapi/futures/v1/private/future/copy-trade/copy-portfolio/detail-list", "GET")
             for row in j.get("data") or []:
                 if row.get("copyPortfolioId") == portfolio:
@@ -261,7 +263,9 @@ class CopyEngine:
             return hit[1]
         lev = 0.0
         try:
-            from listen_copy import api
+            from listen_copy import api, load_session, SESSION
+            if not SESSION:
+                load_session()
             j = api("/bapi/futures/v6/private/future/user-data/user-position", "POST",
                     {"copyTradeType": "COPY", "portfolioId": portfolio})
             for row in (j.get("data") or []):
@@ -470,7 +474,16 @@ class CopyEngine:
             self._lev_plan[symbol] = self._effective_leverage(sig, symbol)
         if mode == "net_equity":
             eq_c = self._mirror_equity(sig["portfolio"])
-            ratio = (self.cfg["exec_equity"] / eq_c) if eq_c > 0 else 0.0
+            eq_x = float(self.cfg.get("exec_equity") or 0)
+            if eq_x <= 0:
+                self._reject(sig, "no_equity", "执行账户权益没填（净值比需要它作分子）")
+                return
+            if eq_c <= 0:
+                # 读不到镜像净投入时不能按 0 比例下单，否则会误补最小名义
+                self._reject(sig, "no_mirror_equity",
+                             "读不到该组合净投入（登录态可能失效），跳过")
+                return
+            ratio = eq_x / eq_c
             qty_target = qty_mirror * ratio * self.cfg["k"]
         elif mode == "fixed_notional":
             ratio = 0.0
@@ -488,7 +501,11 @@ class CopyEngine:
             qty_target = (notional / price) if price > 0 else 0.0
 
         if price > 0:
-            qty_target = min(qty_target, self.cfg["max_order_notional"] / price)
+            cap_qty = self.cfg["max_order_notional"] / price
+            if qty_target > cap_qty + 1e-12:
+                log(f"NOTE  {symbol} 单笔上限 {self.cfg['max_order_notional']:g}U 截断："
+                    f"{qty_target * price:.2f}U → {self.cfg['max_order_notional']:g}U")
+            qty_target = min(qty_target, cap_qty)
 
         key = (symbol, ps or "BOTH")
         mirror_before = self._mirror_pos.get(key, 0.0)

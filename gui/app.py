@@ -316,15 +316,16 @@ class App:
 
         self._cfg_entry(ratio, 1, "系数 k", "k", cfg, "净值比/固定倍数用")
         self._cfg_entry(ratio, 2, "每笔保证金 (U)", "margin_per_trade", cfg, "固定保证金模式用")
-        self._cfg_entry(ratio, 3, "单币仓位上限 %", "max_symbol_pct", cfg, "占执行权益的比例")
-        self._cfg_entry(ratio, 4, "滑点上限 BTC/ETH %", "slippage_btc_eth_pct", cfg, "官方默认 0.5")
-        self._cfg_entry(ratio, 5, "滑点上限 其他币 %", "slippage_default_pct", cfg, "官方默认 1.5")
-        self._cfg_entry(ratio, 7, "最小名义缓冲 %", "min_notional_buffer_pct", cfg,
+        self._cfg_entry(ratio, 3, "每笔固定金额 (U)", "fixed_notional_usdt", cfg, "每笔固定金额模式用")
+        self._cfg_entry(ratio, 4, "单币仓位上限 %", "max_symbol_pct", cfg, "占执行权益的比例")
+        self._cfg_entry(ratio, 5, "滑点上限 BTC/ETH %", "slippage_btc_eth_pct", cfg, "官方默认 0.5")
+        self._cfg_entry(ratio, 6, "滑点上限 其他币 %", "slippage_default_pct", cfg, "官方默认 1.5")
+        self._cfg_entry(ratio, 8, "最小名义缓冲 %", "min_notional_buffer_pct", cfg,
                         "币安按浮点比较，5.00 常被判不足，默认留 1%")
 
         self.var_bump = tk.BooleanVar(value=bool(cfg.get("min_notional_bump", True)))
         ttk.Checkbutton(ratio, text="按比例算出来不足 5U 时，按 5U 最小名义下单",
-                        variable=self.var_bump).grid(row=6, column=0, columnspan=3,
+                        variable=self.var_bump).grid(row=7, column=0, columnspan=3,
                                                      sticky="w", pady=(8, 0))
 
         btns = ttk.Frame(outer)
@@ -356,6 +357,7 @@ class App:
 
         enable("k", use_k)
         enable("margin_per_trade", use_margin)
+        enable("fixed_notional_usdt", mode == "fixed_notional")
         # 杠杆只管保证金占用，跟比例模式无关；只有"跟随带单员"时才不用手填
         follow = self._levmode_labels.get(self.cb_lev_mode.get(), "fixed") == "follow_lead"
         enable("leverage", not follow)
@@ -419,7 +421,7 @@ class App:
         defaults = {
             "exec_equity": 50.0, "leverage": 20, "max_order_notional": 10.0,
             "max_total_notional": 50.0, "ratio_mode": "net_equity", "k": 1.0,
-            "margin_per_trade": 5.0, "max_symbol_pct": 20.0,
+            "margin_per_trade": 5.0, "fixed_notional_usdt": 5.0, "max_symbol_pct": 20.0,
             "slippage_btc_eth_pct": 0.5, "slippage_default_pct": 1.5,
         }
         p = ROOT / "gui" / "copy_config.json"
@@ -532,8 +534,8 @@ class App:
 
         for key, var in self.copy_vars.items():
             raw = var.get().strip()
-            if key in ("exec_api_key", "exec_api_secret"):
-                continue
+            if not raw or key in ("exec_api_key", "exec_api_secret"):
+                continue  # 空值不覆盖已有配置
             try:
                 cfg[key] = float(raw) if "." in raw else int(raw)
             except ValueError:
@@ -552,6 +554,9 @@ class App:
         })
         cfg.pop("exec_api_key", None)
         cfg.pop("exec_api_secret", None)
+        cap = float(cfg.get("max_order_notional") or 0)
+        total = float(cfg.get("max_total_notional") or 0)
+
         # 参数组合自检 1：固定保证金 × 杠杆 超过单笔上限，"固定"就不成立
         if cfg.get("ratio_mode") == "fixed_margin":
             margin = float(cfg.get("margin_per_trade") or 0)
@@ -583,8 +588,25 @@ class App:
                 f"单币上限 {sym_pct:g}% × 权益 {eq:g}U = {eq * sym_pct / 100:.0f}U，\n"
                 f"已经超过总敞口上限 {total:g}U，单币限制永远不会触发。")
 
-        # 参数组合自检 4：单笔上限不能贴着最小名义
-        cap = float(cfg.get("max_order_notional") or 0)
+        # 参数组合自检 4：单笔上限大于总敞口时，任何一单都超总敞口
+        if cap and total and cap > total:
+            messagebox.showwarning(
+                "单笔上限高于总敞口",
+                f"单笔上限 {cap:g}U 大于总敞口上限 {total:g}U。\n\n"
+                "这样每一单都会撞总敞口限制，等于下不出单。\n"
+                "请把单笔上限调到总敞口以内。")
+
+        # 参数组合自检 5：每笔固定金额超过单笔上限会被截断
+        if cfg.get("ratio_mode") == "fixed_notional":
+            fx = float(cfg.get("fixed_notional_usdt") or 0)
+            if fx and cap and fx > cap:
+                messagebox.showwarning(
+                    "每笔固定金额会被截断",
+                    f"每笔固定金额 {fx:g}U 超过单笔上限 {cap:g}U，\n"
+                    f"实际每笔只会下 {cap:g}U。\n\n"
+                    "要真正按固定金额，请提高单笔上限或降低金额。")
+
+        # 参数组合自检 6：单笔上限不能贴着最小名义
         if cap and cap < 5.5:
             messagebox.showwarning(
                 "单笔上限偏小",
