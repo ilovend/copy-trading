@@ -46,6 +46,7 @@ DEFAULTS = {
     "max_signal_age_s": 8.0,
     "min_notional_bump": True,     # 比例算出来不够最小名义时，按最小名义下单
     "min_notional_usdt": 5.0,
+    "min_notional_buffer_pct": 1.0,   # 币安按浮点比较，正好 5.00 常被判不足，留 1% 余量
     "agg_window_ms": 1500,
     "open_order_type": "ioc_limit",
     "close_order_type": "ioc_limit",
@@ -199,6 +200,12 @@ class CopyEngine:
                 pass
         except Exception as e:  # noqa: BLE001
             log(f"exchangeInfo 预热失败（首单会慢）: {e}")
+
+    def _min_notional(self, symbol: str) -> float:
+        flt = self._symbol_filter(symbol)
+        base = max(flt["min_notional"], float(self.cfg.get("min_notional_usdt") or 5.0))
+        buf = float(self.cfg.get("min_notional_buffer_pct") or 0.0) / 100.0
+        return base * (1 + buf)
 
     def _symbol_filter(self, symbol: str) -> dict:
         if symbol in self._filters:
@@ -507,7 +514,7 @@ class CopyEngine:
             if abs(held) <= 1e-12:
                 self._reject(sig, "no_position", "执行账户没有该仓位，跳过平仓")
                 return
-            mn = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
+            mn = self._min_notional(symbol)
             held_abs = abs(held)
             if frac >= 0.999:
                 # 镜像整仓平，执行端也整仓平（不受最小名义限制）
@@ -527,7 +534,7 @@ class CopyEngine:
                     qty_target = min(held_abs, pending)
                     self._pending_reduce.pop(key, None)
         else:
-            min_notional = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
+            min_notional = self._min_notional(symbol)
             cur_notional = qty_target * price
             if cur_notional < min_notional and self.cfg.get("min_notional_bump", True):
                 bump_qty = min_notional / price if price > 0 else 0.0
@@ -543,7 +550,7 @@ class CopyEngine:
         else:
             qty_target = self._floor_step(qty_target, flt["step"])
             # 取整后可能掉到最小名义以下，补回来
-            mn_open = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
+            mn_open = self._min_notional(symbol)
             if qty_target * price < mn_open and self.cfg.get("min_notional_bump", True):
                 # 最小名义优先：向上取整，最多超出单笔上限一个步长
                 qty_target = self._ceil_step(mn_open / price, flt["step"])
@@ -553,15 +560,15 @@ class CopyEngine:
                         f"{self.cfg['max_order_notional']:.0f}U（步长导致）")
         notional = qty_target * price
         full_close = kind == "close" and frac >= 0.999
-        if qty_target <= 0 or (notional < flt["min_notional"] and not full_close):
+        if qty_target <= 0 or (notional < self._min_notional(symbol) - 1e-9 and not full_close):
             cap = float(self.cfg.get("max_order_notional") or 0)
             hint = ""
-            if kind == "open" and cap and cap <= flt["min_notional"] * 1.1:
-                hint = (f"；单笔上限 {cap:.1f}U 与最小名义 {flt['min_notional']:.1f}U 太接近，"
-                        f"建议把单笔上限调到 ≥{flt['min_notional'] * 1.2:.1f}U")
+            if kind == "open" and cap and cap <= self._min_notional(symbol) * 1.1:
+                hint = (f"；单笔上限 {cap:.1f}U 与最小名义 {self._min_notional(symbol):.2f}U 太接近，"
+                        f"建议把单笔上限调到 ≥{self._min_notional(symbol) * 1.2:.1f}U")
             self._reject(sig, "too_small",
                          f"目标 {qty_target} 名义 {notional:.2f} < minNotional "
-                         f"{flt['min_notional']}{hint}")
+                         f"{self._min_notional(symbol):.3f}{hint}")
             return
 
         book_side = "BUY" if side == "BUY" else "SELL"

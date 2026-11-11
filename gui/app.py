@@ -244,6 +244,9 @@ class App:
         self._cfg_entry(ratio, 5, "滑点上限 其他币 %", "slippage_default_pct", cfg, "官方默认 1.5")
         self._cfg_entry(ratio, 6, "保护止损 %", "protective_stop_pct", cfg, "实盘时挂交易所止损，0=关闭")
 
+        self._cfg_entry(ratio, 8, "最小名义缓冲 %", "min_notional_buffer_pct", cfg,
+                        "币安按浮点比较，5.00 常被判不足，默认留 1%")
+
         self.var_bump = tk.BooleanVar(value=bool(cfg.get("min_notional_bump", True)))
         ttk.Checkbutton(ratio, text="按比例算出来不足 5U 时，按 5U 最小名义下单",
                         variable=self.var_bump).grid(row=7, column=0, columnspan=3,
