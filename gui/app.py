@@ -388,6 +388,13 @@ class App:
         cfg["mode"] = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
         cfg["leverage_mode"] = self._levmode_labels.get(self.cb_lev_mode.get(), "fixed")
         cfg["manage_leverage"] = bool(self.var_manage_lev.get())
+        # 密钥只写 .env，JSON 里不落地
+        self._upsert_env({
+            "EXEC_API_KEY": self.copy_vars["exec_api_key"].get().strip(),
+            "EXEC_API_SECRET": self.copy_vars["exec_api_secret"].get().strip(),
+        })
+        cfg.pop("exec_api_key", None)
+        cfg.pop("exec_api_secret", None)
         path = ROOT / "gui" / "copy_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         self._append(f"复制配置已保存：{cfg['ratio_mode']} k={cfg['k']} "
