@@ -15,6 +15,8 @@ import os
 import queue
 import re
 import subprocess
+import tempfile
+import webbrowser
 import sys
 import threading
 import tkinter as tk
@@ -948,25 +950,93 @@ class App:
         self.var_tg_result.set("已保存。正在运行的监听器需重启后生效。")
 
     # --------------------------------------------------------------- misc
+    SESSION_STEPS = (
+        "1. 用浏览器打开并登录 binance.com（要看到跟单页面，确保是登录状态）\n"
+        "2. 按 F12 打开开发者工具，切到 Network（网络）标签\n"
+        "3. 在筛选框输入 bapi（只看接口请求）\n"
+        "4. 按 F5 刷新页面，找到 detail-list 这一条请求\n"
+        "5. 右键它 → Copy（复制）→ Copy as cURL (bash)\n"
+        "6. 把复制到的内容整段粘贴到下面框里，点「开始更新」\n\n"
+        "注意：必须复制 detail-list（不是页面 HTML、不是 JS 文件）；\n"
+        "内容里要能看到 cookie 和 csrftoken，否则更新会失败。"
+    )
+
     def update_session(self) -> None:
         if any(self._alive(n) for n in self.jobs):
             messagebox.showinfo("提示", "先停止所有任务再更新登录态")
             return
-        if not messagebox.askokcancel(
-                "更新登录态",
-                "请先把浏览器里的 cURL 复制到剪贴板：\n\n"
-                "F12 → Network → 刷新 copy-management 页面\n"
-                "→ 任一 user-data 请求 → Copy → Copy as cURL\n\n"
-                "已复制好并继续？"):
-            return
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("更新登录态")
+        dlg.geometry("760x560")
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        ttk.Label(dlg, text="按下面步骤复制 cURL", font=("Microsoft YaHei UI", 11, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 6))
+        ttk.Label(dlg, text=self.SESSION_STEPS, justify="left",
+                  foreground="#444").pack(anchor="w", padx=16)
+
+        btns = ttk.Frame(dlg)
+        btns.pack(fill="x", padx=16, pady=(10, 4))
+        ttk.Button(btns, text="打开币安跟单页",
+                   command=lambda: webbrowser.open("https://www.binance.com/zh-CN/copy-trading")
+                   ).pack(side="left")
+
+        txt = tk.Text(dlg, height=10, wrap="char")
+        txt.pack(fill="both", expand=True, padx=16, pady=(6, 8))
+
+        def paste_clipboard() -> None:
+            try:
+                data = dlg.clipboard_get()
+            except Exception:  # noqa: BLE001
+                messagebox.showwarning("提示", "剪贴板是空的", parent=dlg)
+                return
+            txt.delete("1.0", "end")
+            txt.insert("1.0", data)
+
+        def start() -> None:
+            body = txt.get("1.0", "end").strip()
+            if len(body) < 50:
+                messagebox.showwarning("提示", "请先粘贴 cURL 内容", parent=dlg)
+                return
+            if "bapi" not in body:
+                messagebox.showwarning(
+                    "这不像币安的接口请求",
+                    "复制的内容里没有 bapi。\n\n"
+                    "请确认是在 Network 里复制的 detail-list 请求，\n"
+                    "而不是页面地址或 JS 文件。", parent=dlg)
+                return
+            if "csrftoken" not in body:
+                messagebox.showwarning(
+                    "缺少 csrftoken",
+                    "复制的内容里没有 csrftoken，可能是没登录或复制错了请求。\n"
+                    "请重新登录后再试。", parent=dlg)
+                return
+            dlg.destroy()
+            self._run_session_update(body)
+
+        foot = ttk.Frame(dlg)
+        foot.pack(fill="x", padx=16, pady=(0, 16))
+        ttk.Button(foot, text="从剪贴板读取", command=paste_clipboard).pack(side="left")
+        ttk.Button(foot, text="开始更新", command=start).pack(side="right")
+        ttk.Button(foot, text="取消", command=dlg.destroy).pack(side="right", padx=8)
+
+    def _run_session_update(self, curl_text: str) -> None:
         self._append("运行 update_session.py …", "info")
+        tmp = Path(tempfile.gettempdir()) / "binance_curl.txt"
+        try:
+            tmp.write_text(curl_text, encoding="utf-8")
+        except Exception as e:  # noqa: BLE001
+            self._append(f"写入临时文件失败：{e}", "err")
+            return
 
         def work() -> None:
             try:
                 p = subprocess.run(
-                    [PY, "-u", str(ROOT / "bot" / "update_session.py"), "--clipboard"],
+                    [PY, "-u", str(ROOT / "bot" / "update_session.py"), "--file", str(tmp)],
                     cwd=str(ROOT), capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=60)
+                    encoding="utf-8", errors="replace", timeout=90)
                 for line in (p.stdout or "").splitlines():
                     self.q.put(("log", line))
                 for line in (p.stderr or "").splitlines():
@@ -974,6 +1044,11 @@ class App:
                 self.q.put(("session_done", p.returncode))
             except Exception as e:  # noqa: BLE001
                 self.q.put(("error", f"更新失败：{e}"))
+            finally:
+                try:
+                    tmp.unlink()
+                except Exception:  # noqa: BLE001
+                    pass
 
         threading.Thread(target=work, daemon=True).start()
 
