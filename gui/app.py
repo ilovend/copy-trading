@@ -213,6 +213,7 @@ class App:
         btns = ttk.Frame(parent)
         btns.pack(fill="x", pady=(14, 0))
         ttk.Button(btns, text="保存配置", command=self.save_copy_cfg).pack(side="left")
+        ttk.Button(btns, text="测试连接", command=self.test_exec).pack(side="left", padx=8)
         ttk.Button(btns, text="查看今日日报", command=self.show_shadow_report).pack(side="left")
 
         self.var_mode_hint = tk.StringVar(value="")
@@ -367,6 +368,28 @@ class App:
         cfg["targets"] = {pid: {"enabled": pid in copied_ids} for pid in self.monitored}
         (ROOT / "gui" / "copy_config.json").write_text(
             json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def test_exec(self) -> None:
+        key = self.copy_vars["exec_api_key"].get().strip()
+        secret = self.copy_vars["exec_api_secret"].get().strip()
+        if not key or not secret:
+            messagebox.showwarning("提示", "先填 API Key 和 API Secret")
+            return
+        self.save_copy_cfg()
+        self._append("[复制] 正在测试执行账户连接…", "info")
+
+        def work() -> None:
+            try:
+                from exec_client import ExecClient
+                info = ExecClient(key, secret).test()
+                self.q.put(("log", f"[复制] 连接成功：权益 {info['equity']:.2f}U  "
+                                   f"可用 {info['available']:.2f}U  持仓 {info['positions']} 个"))
+                if info["symbols"]:
+                    self.q.put(("log", f"[复制] 现有持仓：{', '.join(info['symbols'])}"))
+            except Exception as e:  # noqa: BLE001
+                self.q.put(("log", f"[复制] 连接失败：{e}"))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def show_shadow_report(self) -> None:
         def work() -> None:
