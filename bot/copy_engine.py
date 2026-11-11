@@ -110,6 +110,7 @@ class CopyEngine:
         self._total_exposure = 0.0
         self._pos: dict[tuple[str, str], float] = {}
         self._mirror_pos: dict[tuple[str, str], float] = {}
+        self._pending_reduce: dict[tuple[str, str], float] = {}
         self._pending: dict[tuple, dict] = {}
         self._day = datetime.now().date()
         self._stats = {"signals": 0, "intents": 0, "rejected": 0}
@@ -420,6 +421,8 @@ class CopyEngine:
             frac = min(1.0, qty_mirror / denom) if denom > 0 else 1.0
         # 镜像仓位台账：无论我们跟不跟，信号源的仓位都在变
         self._mirror_pos[key] = mirror_before + sign * qty_mirror
+        if kind == "open":
+            self._pending_reduce.pop(key, None)
 
         try:
             held = self._exec_position(symbol, ps)
@@ -433,20 +436,24 @@ class CopyEngine:
                 self._reject(sig, "no_position", "执行账户没有该仓位，跳过平仓")
                 return
             mn = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
+            held_abs = abs(held)
             if frac >= 0.999:
                 # 镜像整仓平，执行端也整仓平（不受最小名义限制）
-                qty_target = abs(held)
+                qty_target = held_abs
+                self._pending_reduce.pop(key, None)
             else:
-                qty_target = min(abs(held), abs(held) * frac)
-                if qty_target * price < mn:
-                    if abs(held) * price < mn * 2:
-                        # 仓位本来就很碎，拆开平会低于最小名义，索性整仓平掉
-                        qty_target = abs(held)
-                    else:
-                        self._reject(sig, "too_small_partial",
-                                     f"部分平仓 {qty_target * price:.2f}U < {mn}U"
-                                     f"（仓位仍有 {abs(held) * price:.2f}U）")
-                        return
+                want = held_abs * frac
+                pending = self._pending_reduce.get(key, 0.0) + want
+                if pending * price < mn:
+                    # 一律攒着，等累计够最小名义再一起平；
+                    # 镜像整仓平的时候会走上面的 frac>=0.999 分支，不会留残仓
+                    self._pending_reduce[key] = pending
+                    log(f"ACCUM  {symbol:10s} {ps or 'BOTH':5s} "
+                        f"累计减仓 {pending * price:.2f}U / 需 {mn:.0f}U（继续攒）")
+                    return
+                else:
+                    qty_target = min(held_abs, pending)
+                    self._pending_reduce.pop(key, None)
         else:
             min_notional = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
             cur_notional = qty_target * price
