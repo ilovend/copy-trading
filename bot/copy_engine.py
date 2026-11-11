@@ -281,7 +281,7 @@ class CopyEngine:
         lev = self._lead_leverage(sig.get("portfolio") or "", symbol)
         if lev > 0:
             if self._lev_logged.get(symbol) != int(lev):
-                log(f"跟随带单员杠杆 {symbol}={lev:g}x")
+                log(f"跟随带单员杠杆 {symbol}={lev:g}x（只影响保证金与强平线，不改变下单量）")
                 self._lev_logged[symbol] = int(lev)
             return int(lev)
         log(f"带单员杠杆未知 {symbol}，回退到 {base}x")
@@ -476,9 +476,10 @@ class CopyEngine:
             qty_target = qty_mirror * self.cfg["k"]
         else:
             ratio = 0.0
-            lev_eff = self._effective_leverage(sig, symbol)
-            self._lev_plan[symbol] = lev_eff
-            notional = self.cfg["margin_per_trade"] * lev_eff
+            # 数量只由「每笔保证金 × 配置杠杆」决定；
+            # 杠杆模式只影响保证金占用与强平线，不参与算量
+            lev_fixed = int(self.cfg.get("leverage") or 20)
+            notional = self.cfg["margin_per_trade"] * lev_fixed
             qty_target = (notional / price) if price > 0 else 0.0
 
         if price > 0:

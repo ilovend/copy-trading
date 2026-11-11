@@ -235,7 +235,7 @@ class App:
         self.cb_lev_mode.set(next((k for k, v in self._levmode_labels.items() if v == cur_lev),
                                   "固定（用上面的杠杆）"))
         self.cb_lev_mode.grid(row=4, column=1, sticky="w", pady=3)
-        ttk.Label(acct, text="跟随模式下读不到带单员杠杆会回退到上面填的值",
+        ttk.Label(acct, text="只影响保证金与强平线，不改变下单数量；读不到则回退",
                   foreground="#999").grid(row=4, column=2, sticky="w", padx=(8, 0))
 
         self.var_manage_lev = tk.BooleanVar(value=bool(cfg.get("manage_leverage", True)))
@@ -316,8 +316,8 @@ class App:
                 "固定倍数：手数 = 镜像数量 × k。只用到「系数 k」，跟两边资金多少无关。")
         else:
             self.var_mode_hint.set(
-                "固定保证金：名义 = 每笔保证金 × 杠杆，手数 = 名义 ÷ 价格。"
-                "用不到「系数 k」。")
+                "固定保证金：名义 = 每笔保证金 × 上面填的杠杆，手数 = 名义 ÷ 价格。"
+                "用不到「系数 k」；带单员杠杆不影响这里。")
 
     def _cfg_entry(self, parent, row: int, label: str, key: str, cfg: dict,
                    hint: str = "", show: str = "") -> None:
