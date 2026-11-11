@@ -285,6 +285,7 @@ class App:
         self.cb_lev_mode.set(next((k for k, v in self._levmode_labels.items() if v == cur_lev),
                                   "固定（用上面的杠杆）"))
         self.cb_lev_mode.grid(row=2, column=1, sticky="w", pady=3)
+        self.cb_lev_mode.bind("<<ComboboxSelected>>", lambda _e: self._apply_ratio_mode())
         ttk.Label(acct, text="只影响保证金与强平线，不改变下单数量；读不到则回退",
                   foreground="#999").grid(row=2, column=2, sticky="w", padx=(8, 0))
 
@@ -355,16 +356,20 @@ class App:
 
         enable("k", use_k)
         enable("margin_per_trade", use_margin)
-        enable("leverage", use_margin)
+        # 杠杆只管保证金占用，跟比例模式无关；只有"跟随带单员"时才不用手填
+        follow = self._levmode_labels.get(self.cb_lev_mode.get(), "fixed") == "follow_lead"
+        enable("leverage", not follow)
 
         if mode == "net_equity":
             self.var_mode_hint.set(
                 "净值比：手数 = 镜像数量 × (执行权益 ÷ 该组合保证金余额) × k。"
-                "只用到「系数 k」，「每笔保证金」和「杠杆」不参与计算。"
+                "只用到「系数 k」，「每笔保证金」不参与计算。"
+                "杠杆不参与算量，但决定保证金占用（跟随模式下用带单员的倍数）。"
                 "比例算出来不足 5U 时，会按 5U 最小名义下单（可关）。")
         elif mode == "fixed_multiple":
             self.var_mode_hint.set(
-                "固定倍数：手数 = 镜像数量 × k。只用到「系数 k」，跟两边资金多少无关。")
+                "固定倍数：手数 = 镜像数量 × k。只用到「系数 k」，跟两边资金多少无关。"
+                "杠杆同样不参与算量。")
         elif mode == "fixed_notional":
             self.var_mode_hint.set(
                 "每笔固定名义：不管镜像开多大，每笔都按「每笔固定金额」下单（受最小名义约束）。")
