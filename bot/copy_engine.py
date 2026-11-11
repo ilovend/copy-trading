@@ -46,7 +46,8 @@ DEFAULTS = {
     "max_signal_age_s": 8.0,
     "min_notional_bump": True,     # 比例算出来不够最小名义时，按最小名义下单
     "min_notional_usdt": 5.0,
-    "min_notional_buffer_pct": 1.0,   # 币安按浮点比较，正好 5.00 常被判不足，留 1% 余量
+    "min_notional_buffer_pct": 1.0,
+    "push_orders": True,          # 下单结果推 Telegram   # 币安按浮点比较，正好 5.00 常被判不足，留 1% 余量
     "agg_window_ms": 1500,
     "ioc_price_buffer_pct": 0.05,
 }
@@ -235,6 +236,21 @@ class CopyEngine:
         if symbol in ("BTCUSDT", "ETHUSDT"):
             return self.cfg.get("slippage_btc_eth_pct", 0.5) * 100
         return self.cfg.get("slippage_default_pct", 1.5) * 100
+
+    def _notify(self, text: str) -> None:
+        """后台线程发送，避免 Telegram 的网络延迟拖慢订单处理。"""
+        if not self.cfg.get("push_orders", True):
+            return
+        threading.Thread(target=self._send_tg, args=(text,), daemon=True).start()
+
+    @staticmethod
+    def _send_tg(text: str) -> None:
+        try:
+            from listen_copy import tg_send
+            if not tg_send(text):
+                log("telegram 未配置或发送失败")
+        except Exception as e:  # noqa: BLE001
+            log(f"telegram error: {e}")
 
     def _exec(self):
         if getattr(self, "_ex", None) is None:
@@ -638,6 +654,11 @@ class CopyEngine:
         order_resp = None
         if mode_cfg in ("live_dry", "live"):
             order_params = self._order_params(symbol, side, qty_target, kind, price, book, ps)
+            if mode_cfg == "live_dry":
+                act = "开仓" if kind == "open" else "平仓"
+                self._notify(f"🧪 干跑{act} {symbol} {side}\n"
+                             f"数量 {qty_target:g}  价格 {order_params['price']:g}\n"
+                             f"名义 {notional:.2f}U（未发送）")
             log(f"ORDER {'SEND' if mode_cfg == 'live' else 'DRY '} {symbol} {side} "
                 f"qty={order_params['qty']:g} px={order_params['price']:g} "
                 f"{order_params['type']}/{order_params['timeInForce']}"
@@ -647,6 +668,7 @@ class CopyEngine:
                     order_resp = self._send_order(order_params)
                 except Exception as e:  # noqa: BLE001
                     self._reject(sig, "order_failed", str(e)[:180])
+                    self._notify(f"⚠️ 下单失败 {symbol} {side}\n{str(e)[:160]}")
                     return
                 filled = float(order_resp.get("executedQty") or 0)
                 if filled <= 0:
@@ -655,6 +677,11 @@ class CopyEngine:
                     return
                 log(f"ORDER DONE id={order_resp.get('orderId')} "
                     f"filled={filled:g} avg={order_resp.get('avgPrice')}")
+                act = "开仓" if kind == "open" else "平仓"
+                entry = order_resp.get("avgPrice") or order_params["price"]
+                self._notify(f"✅ 实盘{act} {symbol} {side}\n"
+                             f"数量 {filled:g}  价格 {entry}\n"
+                             f"名义 {notional:.2f}U  {datetime.now():%H:%M:%S}")
 
         self._pos[(symbol, ps or "BOTH")] = after_pos
         self._exposure[symbol] = self._exposure.get(symbol, 0.0) + (notional if kind == "open" else -notional)

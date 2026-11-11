@@ -248,6 +248,11 @@ class App:
         self.sv_cap = tk.StringVar(value=str(cfg.get("max_order_notional", 5)))
         ttk.Entry(simple, textvariable=self.sv_cap, width=30).grid(row=3, column=1, sticky="w")
 
+        self.var_push = tk.BooleanVar(value=bool(cfg.get("push_orders", True)))
+        ttk.Checkbutton(simple, text="下单结果推送 Telegram",
+                        variable=self.var_push).grid(row=5, column=0, columnspan=3,
+                                                     sticky="w", pady=(8, 0))
+
         ttk.Label(simple, foreground="#777", wraplength=800, justify="left", text=(
             "总敞口、单币上限、滑点、杠杆会自动按安全值设置；"
             "需要逐项调整就勾选下面的「显示高级设置」。"
@@ -487,6 +492,7 @@ class App:
         if lv_label:
             self.cb_lev_mode.set(lv_label)
         self.var_manage_lev.set(bool(cfg.get("manage_leverage", True)))
+        self.var_push.set(bool(cfg.get("push_orders", True)))
         self._apply_ratio_mode()
         self._refresh_exec_warn()
 
@@ -510,6 +516,7 @@ class App:
             cfg["manage_leverage"] = False
             cfg["min_notional_bump"] = True
             cfg["k"] = 1.0
+            cfg["push_orders"] = bool(self.var_push.get())
             if method == "fixed":
                 cfg["ratio_mode"] = "fixed_notional"
                 cfg["fixed_notional_usdt"] = fixed
@@ -546,6 +553,7 @@ class App:
         cfg["mode"] = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
         cfg["leverage_mode"] = self._levmode_labels.get(self.cb_lev_mode.get(), "fixed")
         cfg["manage_leverage"] = bool(self.var_manage_lev.get())
+        cfg["push_orders"] = bool(self.var_push.get())
         cfg["show_advanced"] = True
         # 密钥只写 .env，JSON 里不落地
         self._upsert_env({

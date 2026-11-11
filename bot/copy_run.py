@@ -41,9 +41,21 @@ def main() -> None:
           f"其他={cfg.get('slippage_default_pct', 1.5)}%", flush=True)
 
     tokens = L.parse_tokens(args.only)
+    mode_txt = {"shadow": "影子（只记录）", "live_dry": "干跑（不发送）",
+                "live": "实盘（真实下单）"}.get(exec_mode, exec_mode)
+    L.tg_send(
+        f"🟢 复制已启动 v{__version__}\n"
+        f"模式：{mode_txt}\n"
+        f"比例：{cfg['ratio_mode']} k={cfg['k']}\n"
+        f"执行权益：{cfg['exec_equity']}U  单笔≤{cfg['max_order_notional']}U\n"
+        f"跟单组合：{len(tokens)} 个")
+
     try:
         asyncio.run(L.run(tokens, False))
     except KeyboardInterrupt:
+        pass
+    finally:
+        L.tg_send(f"🔴 复制已停止 v{__version__}")
         print("[copy] bye", flush=True)
 
 
