@@ -954,11 +954,12 @@ class App:
         "1. 用浏览器打开并登录 binance.com（要看到跟单页面，确保是登录状态）\n"
         "2. 按 F12 打开开发者工具，切到 Network（网络）标签\n"
         "3. 在筛选框输入 bapi（只看接口请求）\n"
-        "4. 按 F5 刷新页面，找到 detail-list 这一条请求\n"
+        "4. 按 F5 刷新页面，任意点开一条 bapi 请求\n"
+        "   （例如 .../usertask/challenge/list，任何一条带登录态的都可以）\n"
         "5. 右键它 → Copy（复制）→ Copy as cURL (bash)\n"
         "6. 把复制到的内容整段粘贴到下面框里，点「开始更新」\n\n"
-        "注意：必须复制 detail-list（不是页面 HTML、不是 JS 文件）；\n"
-        "内容里要能看到 cookie 和 csrftoken，否则更新会失败。"
+        "注意：要复制接口请求（bapi/...），不是页面 HTML、不是 JS 文件；\n"
+        "内容里必须能看到 cookie 和 csrftoken，否则更新会失败。"
     )
 
     def update_session(self) -> None:
@@ -1004,7 +1005,7 @@ class App:
                 messagebox.showwarning(
                     "这不像币安的接口请求",
                     "复制的内容里没有 bapi。\n\n"
-                    "请确认是在 Network 里复制的 detail-list 请求，\n"
+                    "请在 Network 里复制任意一条 bapi 接口请求，\n"
                     "而不是页面地址或 JS 文件。", parent=dlg)
                 return
             if "csrftoken" not in body:
