@@ -1,0 +1,28 @@
+# ---- credentials / local state (never commit) ----
+.env
+.env.local
+*.pem
+*.key
+probe/session.json
+probe/session.backup.json
+probe/listenkey.txt
+probe/curl*.txt
+gui/state.json
+gui/gui.log
+gui/copy_config.json
+gui/autojoin_config.json
+
+# ---- runtime data ----
+bot/data/
+dist/
+probe/out/
+
+# ---- scratch / research scripts (contain local ids / router secret) ----
+probe/
+gui/_*.py
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ---- embedded legacy repo (contains hard-coded credentials) ----
+Binance-Join-CopyTrader-Automation/
