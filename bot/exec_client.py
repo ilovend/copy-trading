@@ -79,7 +79,19 @@ def _request(method: str, path: str, params: dict | None = None,
                 _CONN = None
             body = json.loads(raw.decode())
             if resp.status >= 400:
-                raise RuntimeError(f"HTTP {resp.status}: {body}")
+                code = body.get("code") if isinstance(body, dict) else None
+                hint = {
+                    -2015: "IP 不在白名单 / 权限不足 / Key 已过期（检查 API 管理页）",
+                    -2014: "API Key 格式错误或不存在",
+                    -1022: "签名错误（Secret 不对）",
+                    -1021: "时间戳超出窗口（本机时间偏差过大）",
+                    -4061: "账户是单向持仓模式，不能带 positionSide",
+                    -4062: "账户是双向持仓模式，必须带 positionSide",
+                }.get(code)
+                msg = f"HTTP {resp.status}: {body}"
+                if hint:
+                    msg += f" → {hint}"
+                raise RuntimeError(msg)
             return body
         except RuntimeError:
             raise
@@ -120,6 +132,17 @@ class ExecClient:
             total += float(r.get("positionAmt") or 0)
         return total
 
+    def position_mode(self) -> bool:
+        """True = 双向持仓（Hedge Mode），False = 单向。"""
+        r = _request("GET", "/fapi/v1/positionSide/dual", key=self.key, secret=self.secret)
+        return bool(r.get("dualSidePosition"))
+
+    def set_position_mode(self, dual: bool) -> dict:
+        """切换持仓模式。有持仓时币安会拒绝，这是保护，不要绕过。"""
+        return _request("POST", "/fapi/v1/positionSide/dual",
+                        {"dualSidePosition": "true" if dual else "false"},
+                        key=self.key, secret=self.secret)
+
     def open_orders(self, symbol: str) -> list[dict]:
         return _request("GET", "/fapi/v1/openOrders", {"symbol": symbol},
                         key=self.key, secret=self.secret)
@@ -143,9 +166,12 @@ class ExecClient:
     def order(self, symbol: str, side: str, qty: float, *,
               order_type: str = "MARKET", price: float | None = None,
               time_in_force: str | None = None, reduce_only: bool = False,
-              close_position: bool = False, stop_price: float | None = None) -> dict:
+              close_position: bool = False, stop_price: float | None = None,
+              position_side: str | None = None) -> dict:
         params = {"symbol": symbol, "side": side, "type": order_type,
                   "quantity": qty, "newOrderRespType": "RESULT"}
+        if position_side:
+            params["positionSide"] = position_side
         if price is not None:
             params["price"] = price
         if time_in_force:
@@ -171,7 +197,9 @@ class ExecClient:
             raise RuntimeError("没有配置 API Key / Secret")
         acc = self.account()
         positions = self.positions()
+        hedge = self.position_mode()
         return {
+            "hedge": hedge,
             "equity": float(acc.get("totalMarginBalance") or 0),
             "wallet": float(acc.get("totalWalletBalance") or 0),
             "available": float(acc.get("availableBalance") or 0),

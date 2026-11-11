@@ -109,6 +109,7 @@ class CopyEngine:
         self._exposure: dict[str, float] = {}
         self._total_exposure = 0.0
         self._pos: dict[tuple[str, str], float] = {}
+        self._hedge: bool | None = None
         self._mirror_pos: dict[tuple[str, str], float] = {}
         self._pending_reduce: dict[tuple[str, str], float] = {}
         self._pending: dict[tuple, dict] = {}
@@ -236,8 +237,17 @@ class CopyEngine:
         n = round(price / tick)
         return round(n * tick, 10)
 
+    def _is_hedge(self) -> bool:
+        if self._hedge is None:
+            try:
+                self._hedge = self._exec().position_mode()
+            except Exception as e:  # noqa: BLE001
+                log(f"持仓模式查询失败，按单向处理: {e}")
+                self._hedge = False
+        return self._hedge
+
     def _order_params(self, symbol: str, side: str, qty: float, kind: str,
-                      price: float, book: dict) -> dict:
+                      price: float, book: dict, ps: str | None = None) -> dict:
         """IOC 限价挂在对手价上，只留极小缓冲，保证成交且不偏离市场。
 
         开仓和平仓同一套逻辑：
@@ -263,7 +273,7 @@ class CopyEngine:
                 px = self._tick_round(ref + tick, tick)
             elif side == "SELL" and px > ref:
                 px = self._tick_round(ref - tick, tick)
-        return {
+        params = {
             "symbol": symbol,
             "side": side,
             "qty": qty,
@@ -272,6 +282,11 @@ class CopyEngine:
             "timeInForce": "IOC",
             "reduceOnly": kind == "close",
         }
+        if self._is_hedge() and ps in ("LONG", "SHORT"):
+            # 双向持仓：用 positionSide 指定方向，且不能带 reduceOnly
+            params["positionSide"] = ps
+            params["reduceOnly"] = False
+        return params
 
     def _send_order(self, params: dict) -> dict:
         ex = self._exec()
@@ -286,7 +301,8 @@ class CopyEngine:
         return ex.order(symbol, params["side"], params["qty"],
                         order_type=params["type"], price=params["price"],
                         time_in_force=params["timeInForce"],
-                        reduce_only=params["reduceOnly"])
+                        reduce_only=params["reduceOnly"],
+                        position_side=params.get("positionSide"))
 
     def _exec_position(self, symbol: str, ps: str | None) -> float:
         """执行账户当前持仓。
@@ -518,7 +534,7 @@ class CopyEngine:
         order_params = None
         order_resp = None
         if mode_cfg in ("live_dry", "live"):
-            order_params = self._order_params(symbol, side, qty_target, kind, price, book)
+            order_params = self._order_params(symbol, side, qty_target, kind, price, book, ps)
             log(f"ORDER {'SEND' if mode_cfg == 'live' else 'DRY '} {symbol} {side} "
                 f"qty={order_params['qty']:g} px={order_params['price']:g} "
                 f"{order_params['type']}/{order_params['timeInForce']}"
