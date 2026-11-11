@@ -759,7 +759,7 @@ class App:
             return []
 
     # ------------------------------------------------------------ process
-    JOB_LABEL = {"monitor": "监控", "shadow": "影子", "autojoin": "跟单"}
+    JOB_LABEL = {"monitor": "监控", "shadow": "复制", "autojoin": "跟单"}
 
     def _alive(self, name: str) -> bool:
         proc = self.jobs.get(name)
@@ -802,8 +802,14 @@ class App:
 
         self.jobs[name] = proc
         self._refresh_job_status()
-        self._append(f"启动 {self.JOB_LABEL[name]}："
-                     f"{'全部组合' if not ids else '选中 ' + str(len(ids)) + ' 个'}", "ok")
+        if name == "shadow":
+            mode_label = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
+            extra = {"shadow": "影子", "live_dry": "干跑", "live": "实盘"}[mode_label]
+            self._append(f"启动复制（{extra}）："
+                         f"{'全部组合' if not ids else '选中 ' + str(len(ids)) + ' 个'}", "ok")
+        else:
+            self._append(f"启动 {self.JOB_LABEL[name]}："
+                         f"{'全部组合' if not ids else '选中 ' + str(len(ids)) + ' 个'}", "ok")
         self._save_state()
         threading.Thread(target=self._reader, args=(proc, name), daemon=True).start()
 
