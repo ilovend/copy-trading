@@ -545,11 +545,12 @@ class CopyEngine:
             # 取整后可能掉到最小名义以下，补回来
             mn_open = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
             if qty_target * price < mn_open and self.cfg.get("min_notional_bump", True):
-                qty_target = min(
-                    self._ceil_step(mn_open / price, flt["step"]),
-                    self._floor_step(self.cfg["max_order_notional"] / price, flt["step"]),
-                )
+                # 最小名义优先：向上取整，最多超出单笔上限一个步长
+                qty_target = self._ceil_step(mn_open / price, flt["step"])
                 bumped = True
+                if qty_target * price > self.cfg["max_order_notional"] + 1e-9:
+                    log(f"NOTE  {symbol} 最小名义 {mn_open:.0f}U 略超单笔上限 "
+                        f"{self.cfg['max_order_notional']:.0f}U（步长导致）")
         notional = qty_target * price
         full_close = kind == "close" and frac >= 0.999
         if qty_target <= 0 or (notional < flt["min_notional"] and not full_close):
