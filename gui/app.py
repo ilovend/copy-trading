@@ -164,8 +164,32 @@ class App:
             self.log.tag_config(tag, foreground=color)
 
     # ------------------------------------------------------------- 复制 tab
+    def _scroll_area(self, parent: ttk.Frame) -> ttk.Frame:
+        """可滚动内容区：内容比窗口高时不会把控件裁掉。"""
+        outer = ttk.Frame(parent)
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(win, width=e.width))
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        def _wheel(event) -> None:
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        return inner
+
     def _build_copy(self, parent: ttk.Frame) -> None:
         cfg = self._load_copy_cfg()
+        parent = self._scroll_area(parent)
         self.copy_vars: dict[str, tk.StringVar] = {}
 
         ttk.Label(parent, text="仓位复制",
@@ -611,6 +635,7 @@ class App:
     # ------------------------------------------------------------ 自动跟单 tab
     def _build_autojoin(self, parent: ttk.Frame) -> None:
         cfg = self._load_aj_cfg()
+        parent = self._scroll_area(parent)
 
         bar = ttk.Frame(parent)
         bar.pack(fill="x")
