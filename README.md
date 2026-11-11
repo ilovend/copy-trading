@@ -70,7 +70,7 @@ docs/
 
 ## 安全
 
-- `.env`、`probe/session.json`、`gui/copy_config.json` 全部在 `.gitignore` 里
+- `.env`、`session.json`、`gui/copy_config.json` 全部在 `.gitignore` 里
 - 登录态等同账号权限，只在本地使用，不要放服务器
 - 实盘前给 API Key 关掉提现、绑定 IP 白名单
 

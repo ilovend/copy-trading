@@ -3,6 +3,7 @@
 .env.local
 *.pem
 *.key
+session.json
 probe/session.json
 probe/session.backup.json
 probe/listenkey.txt

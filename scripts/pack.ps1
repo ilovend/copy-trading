@@ -25,7 +25,7 @@ $excludeDirs = @(
 # individual files to skip
 $excludeFiles = @(
     ".env", ".env.local",
-    "probe\session.json", "probe\listenkey.txt",
+    "session.json", "probe\session.json", "probe\listenkey.txt",
     "gui\state.json", "gui\gui.log"
 )
 

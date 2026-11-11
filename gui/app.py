@@ -636,7 +636,9 @@ class App:
         has = bool(L.TG_TOKEN and L.TG_CHAT)
         self.var_tg.set("Telegram 已配置" if has else "未配置")
         self.var_proxy.set(L.TG_PROXY or "直连")
-        sp = ROOT / "probe" / "session.json"
+        sp = ROOT / "session.json"
+        if not sp.exists():
+            sp = ROOT / "probe" / "session.json"
         if not sp.exists():
             self.var_session.set("缺失，请点「更新登录态」")
         else:

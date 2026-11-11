@@ -56,7 +56,8 @@ TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")
 TG_PROXY = os.environ.get("TELEGRAM_PROXY", "").strip()
 FALLBACK_PID = os.environ.get("COPY_PORTFOLIO_ID", "")
 
-SESSION_PATH = ROOT / "probe" / "session.json"
+SESSION_PATH = ROOT / "session.json"
+LEGACY_SESSION = ROOT / "probe" / "session.json"
 SESSION = {}
 HEADERS: dict[str, str] = {}
 SESSION_MTIME = 0.0
@@ -69,13 +70,28 @@ def log(msg: str) -> None:
     print(f"{datetime.now():%H:%M:%S} {msg}", flush=True)
 
 
+def _session_file() -> Path:
+    """登录态文件：根目录 session.json 优先；老版本在 probe/ 下则自动迁移。"""
+    if SESSION_PATH.exists():
+        return SESSION_PATH
+    if LEGACY_SESSION.exists():
+        try:
+            import shutil
+            shutil.copy2(LEGACY_SESSION, SESSION_PATH)
+            log("已将 probe/session.json 迁移到根目录 session.json")
+        except Exception:  # noqa: BLE001
+            return LEGACY_SESSION
+    return SESSION_PATH
+
+
 def load_session() -> None:
-    """Session source priority: .env (BINANCE_COOKIE + BINANCE_CSRFTOKEN) > probe/session.json."""
+    """Session source priority: .env (BINANCE_COOKIE + BINANCE_CSRFTOKEN) > session.json."""
     global SESSION, HEADERS, SESSION_MTIME
     file_sess: dict = {}
-    if SESSION_PATH.exists():
-        file_sess = json.loads(SESSION_PATH.read_text(encoding="utf-8-sig"))
-        SESSION_MTIME = SESSION_PATH.stat().st_mtime
+    path = _session_file()
+    if path.exists():
+        file_sess = json.loads(path.read_text(encoding="utf-8-sig"))
+        SESSION_MTIME = path.stat().st_mtime
 
     env_cookie = os.environ.get("BINANCE_COOKIE", "").strip()
     env_csrf = os.environ.get("BINANCE_CSRFTOKEN", "").strip()

@@ -23,7 +23,8 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SESSION_PATH = ROOT / "probe" / "session.json"
+SESSION_PATH = ROOT / "session.json"
+LEGACY_SESSION = ROOT / "probe" / "session.json"
 BASE = "https://www.binance.com"
 
 WANTED = {
@@ -179,8 +180,9 @@ def main() -> None:
     if exp:
         print(f"  challenge-token 过期时间 {exp}")
 
-    if SESSION_PATH.exists():
-        old = json.loads(SESSION_PATH.read_text(encoding="utf-8-sig"))
+    old_path = SESSION_PATH if SESSION_PATH.exists() else LEGACY_SESSION
+    if old_path.exists():
+        old = json.loads(old_path.read_text(encoding="utf-8-sig"))
         if not sess.get("portfolioId"):
             sess["portfolioId"] = old.get("portfolioId")
         if not sess.get("user-agent"):
