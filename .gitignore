@@ -1,4 +1,5 @@
 # ---- credentials / local state (never commit) ----
+.local-state.md
 .env
 .env.local
 *.pem

@@ -44,6 +44,7 @@ python gui\启动.bat
 点「测试连接」确认权益与持仓模式。
 
 > 更新内容见 [CHANGELOG.md](CHANGELOG.md)。
+> 开发者/接手者先读 [docs/HANDOFF.md](docs/HANDOFF.md)。
 
 ---
 
