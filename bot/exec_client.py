@@ -27,7 +27,24 @@ CONFIG_PATH = ROOT / "gui" / "copy_config.json"
 FAPI = "https://fapi.binance.com"
 
 
+def _load_env_file() -> None:
+    """.env 里的变量如果没进环境，就补进来（不改已有值）。"""
+    path = ROOT / ".env"
+    if not path.exists():
+        return
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def load_keys() -> tuple[str, str]:
+    _load_env_file()
     key = os.environ.get("EXEC_API_KEY", "").strip()
     secret = os.environ.get("EXEC_API_SECRET", "").strip()
     if not key or not secret:

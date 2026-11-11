@@ -309,15 +309,34 @@ class App:
             ttk.Label(parent, text=hint, foreground="#aaa").grid(row=row, column=2, sticky="w", padx=(10, 0))
         self.copy_vars[key] = var
 
-    @staticmethod
-    def _load_copy_cfg() -> dict:
+    def _upsert_env(self, pairs: dict) -> None:
+        """把键值写进 .env：已有的更新，没有的追加，其它行原样保留。"""
+        path = ROOT / ".env"
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+        out, seen = [], set()
+        for line in lines:
+            st = line.strip()
+            if st and not st.startswith("#") and "=" in st:
+                k = st.split("=", 1)[0].strip()
+                if k in pairs:
+                    out.append(f"{k}={pairs[k]}")
+                    seen.add(k)
+                    continue
+            out.append(line)
+        for k, v in pairs.items():
+            if k not in seen:
+                out.append(f"{k}={v}")
+        path.write_text("\n".join(out) + "\n", encoding="utf-8")
+        for k, v in pairs.items():
+            os.environ[k] = v
+
+    def _load_copy_cfg(self) -> dict:
         defaults = {
             "exec_equity": 50.0, "leverage": 20, "max_order_notional": 10.0,
             "max_total_notional": 50.0, "ratio_mode": "net_equity", "k": 1.0,
             "margin_per_trade": 5.0, "max_symbol_pct": 20.0,
             "max_slippage_pct": 0.5, "slippage_btc_eth_pct": 0.5,
             "slippage_default_pct": 1.5, "protective_stop_pct": 2.0,
-            "exec_api_key": "", "exec_api_secret": "",
         }
         p = ROOT / "gui" / "copy_config.json"
         if p.exists():
@@ -325,6 +344,32 @@ class App:
                 defaults.update(json.loads(p.read_text(encoding="utf-8")))
             except Exception:  # noqa: BLE001
                 pass
+        # 密钥只来自 .env
+        try:
+            L.load_env(ROOT / ".env")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 迁移：旧版本把密钥存在 JSON 里，搬到 .env 并从 JSON 删除
+        if not os.environ.get("EXEC_API_KEY"):
+            legacy_k = str(defaults.get("exec_api_key") or "").strip()
+            legacy_s = str(defaults.get("exec_api_secret") or "").strip()
+            if legacy_k or legacy_s:
+                self._upsert_env({"EXEC_API_KEY": legacy_k, "EXEC_API_SECRET": legacy_s})
+                defaults.pop("exec_api_key", None)
+                defaults.pop("exec_api_secret", None)
+                if p.exists():
+                    try:
+                        raw = json.loads(p.read_text(encoding="utf-8"))
+                        raw.pop("exec_api_key", None)
+                        raw.pop("exec_api_secret", None)
+                        p.write_text(json.dumps(raw, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        defaults["exec_api_key"] = os.environ.get("EXEC_API_KEY", "")
+        defaults["exec_api_secret"] = os.environ.get("EXEC_API_SECRET", "")
         return defaults
 
     def save_copy_cfg(self) -> None:
@@ -332,7 +377,6 @@ class App:
         for key, var in self.copy_vars.items():
             raw = var.get().strip()
             if key in ("exec_api_key", "exec_api_secret"):
-                cfg[key] = raw
                 continue
             try:
                 cfg[key] = float(raw) if "." in raw else int(raw)
