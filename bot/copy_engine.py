@@ -383,6 +383,12 @@ class CopyEngine:
         return round(n * step, 10)
 
     @staticmethod
+    def _round_step(qty: float, step: float) -> float:
+        if step <= 0:
+            return qty
+        return round(round(qty / step) * step, 10)
+
+    @staticmethod
     def _ceil_step(qty: float, step: float) -> float:
         if step <= 0:
             return qty
@@ -564,7 +570,10 @@ class CopyEngine:
         elif bumped:
             qty_target = self._ceil_step(qty_target, flt["step"])
         else:
-            qty_target = self._floor_step(qty_target, flt["step"])
+            # 开仓取最接近的步长（"每笔固定金额"才不会总是少一档）
+            qty_target = self._round_step(qty_target, flt["step"])
+            if qty_target * price > self.cfg["max_order_notional"]:
+                qty_target = self._floor_step(qty_target, flt["step"])
             # 取整后可能掉到最小名义以下，补回来
             mn_open = self._min_notional(symbol)
             if qty_target * price < mn_open and self.cfg.get("min_notional_bump", True):
