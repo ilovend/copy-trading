@@ -221,8 +221,8 @@ class App:
 
         acct = ttk.LabelFrame(parent, text="执行账户", padding=12)
         acct.pack(fill="x")
-        self._cfg_entry(acct, 0, "API Key", "exec_api_key", cfg, "接入实盘时填（当前不用）", show="*")
-        self._cfg_entry(acct, 1, "API Secret", "exec_api_secret", cfg, "接入实盘时填（当前不用）", show="*")
+        self._cfg_entry(acct, 0, "API Key", "exec_api_key", cfg, "实盘必填，只存 .env", show="*")
+        self._cfg_entry(acct, 1, "API Secret", "exec_api_secret", cfg, "实盘必填，只存 .env", show="*")
         self._cfg_entry(acct, 2, "执行账户权益 (U)", "exec_equity", cfg, "手填当前权益，比如 50")
         self._cfg_entry(acct, 3, "杠杆", "leverage", cfg, "子账户最高 5x；实盘建议用主账户")
 
@@ -250,14 +250,14 @@ class App:
         ttk.Label(ratio, text="比例模式", width=18, foreground="#666").grid(row=0, column=0, sticky="w", pady=3)
         self.var_ratio_mode = tk.StringVar()
         self._ratio_labels = {
-            "净值比（执行权益 / 镜像权益）": "net_equity",
+            "净值比（执行权益 / 镜像净投入）": "net_equity",
             "固定倍数（镜像数量 × k）": "fixed_multiple",
             "固定保证金（每笔固定保证金 × 杠杆）": "fixed_margin",
         }
         cb = ttk.Combobox(ratio, values=list(self._ratio_labels), state="readonly", width=34)
         cur = cfg.get("ratio_mode", "net_equity")
         cb.set(next((k for k, v in self._ratio_labels.items() if v == cur),
-                    "净值比（执行权益 / 镜像权益）"))
+                    "净值比（执行权益 / 镜像净投入）"))
         cb.grid(row=0, column=1, sticky="w", pady=3)
         self.cb_ratio = cb
         cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_ratio_mode())
@@ -420,7 +420,38 @@ class App:
         })
         cfg.pop("exec_api_key", None)
         cfg.pop("exec_api_secret", None)
-        # 参数组合自检：单笔上限不能贴着最小名义
+        # 参数组合自检 1：固定保证金 × 杠杆 超过单笔上限，"固定"就不成立
+        if cfg.get("ratio_mode") == "fixed_margin":
+            margin = float(cfg.get("margin_per_trade") or 0)
+            lev = float(cfg.get("leverage") or 0)
+            cap0 = float(cfg.get("max_order_notional") or 0)
+            if margin and lev and cap0 and margin * lev > cap0:
+                messagebox.showwarning(
+                    "固定保证金会被截断",
+                    f"每笔保证金 {margin:g}U × 杠杆 {lev:g}x = {margin * lev:.0f}U\n"
+                    f"但单笔上限只有 {cap0:g}U，实际每笔只会开 {cap0:g}U。\n\n"
+                    "想让\"固定保证金\"真正生效，请提高单笔上限，\n"
+                    "或降低每笔保证金 / 杠杆。")
+
+        # 参数组合自检 2：跟随带单员但没勾选设置杠杆，等于没跟随
+        if cfg.get("leverage_mode") == "follow_lead" and not cfg.get("manage_leverage", True):
+            messagebox.showwarning(
+                "跟随杠杆不会生效",
+                "你选了「跟随带单员」杠杆，但没勾选\n"
+                "「下单前设置该币种杠杆」。\n\n"
+                "这样程序不会改杠杆，跟随选项等于没开。")
+
+        # 参数组合自检 3：单币上限高于总敞口时，单币上限永远不触发
+        eq = float(cfg.get("exec_equity") or 0)
+        sym_pct = float(cfg.get("max_symbol_pct") or 0)
+        total = float(cfg.get("max_total_notional") or 0)
+        if eq and sym_pct and total and eq * sym_pct / 100 > total:
+            messagebox.showwarning(
+                "单币上限不会生效",
+                f"单币上限 {sym_pct:g}% × 权益 {eq:g}U = {eq * sym_pct / 100:.0f}U，\n"
+                f"已经超过总敞口上限 {total:g}U，单币限制永远不会触发。")
+
+        # 参数组合自检 4：单笔上限不能贴着最小名义
         cap = float(cfg.get("max_order_notional") or 0)
         if cap and cap < 5.5:
             messagebox.showwarning(
@@ -550,6 +581,13 @@ class App:
                                    f"可用 {info['available']:.2f}U  持仓 {info['positions']} 个"))
                 if info["equity"] <= 0:
                     self.q.put(("log", "⚠ 合约钱包余额为 0，需要先从现货划转才能下单"))
+                else:
+                    cfg0 = self._load_copy_cfg()
+                    eq0 = float(cfg0.get("exec_equity") or 0)
+                    if eq0 > 0 and abs(info["equity"] - eq0) / eq0 > 0.10:
+                        self.q.put(("log", f"⚠ 配置权益 {eq0:.0f}U 与实际 {info['equity']:.2f}U "
+                                           f"相差 {abs(info['equity'] - eq0) / eq0 * 100:.0f}%，"
+                                           "净值比会失真，建议同步"))
                 self.q.put(("log", f"账户持仓模式：{mode_txt}"
                                    + ("（下单会自动带 positionSide）" if info.get("hedge")
                                       else "（平仓用 reduceOnly）")))
