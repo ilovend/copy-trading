@@ -148,10 +148,23 @@ class ExecClient:
                         key=self.key, secret=self.secret)
 
     # ----------------------------------------------------------- write
+    SUBACCOUNT_MAX_LEVERAGE = 5
+
     def set_leverage(self, symbol: str, leverage: int) -> dict:
-        return _request("POST", "/fapi/v1/leverage",
-                        {"symbol": symbol, "leverage": int(leverage)},
-                        key=self.key, secret=self.secret)
+        try:
+            return _request("POST", "/fapi/v1/leverage",
+                            {"symbol": symbol, "leverage": int(leverage)},
+                            key=self.key, secret=self.secret)
+        except RuntimeError as e:
+            # -4421：子账户杠杆不能超过 5x，自动降级
+            if "-4421" in str(e) and int(leverage) > self.SUBACCOUNT_MAX_LEVERAGE:
+                r = _request("POST", "/fapi/v1/leverage",
+                             {"symbol": symbol,
+                              "leverage": self.SUBACCOUNT_MAX_LEVERAGE},
+                             key=self.key, secret=self.secret)
+                r["clamped"] = True
+                return r
+            raise
 
     def set_margin_type(self, symbol: str, mode: str) -> dict:
         try:

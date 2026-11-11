@@ -298,7 +298,9 @@ class CopyEngine:
         lev = self.cfg.get("leverage")
         if lev and symbol not in self._lev_set:
             try:
-                ex.set_leverage(symbol, int(lev))
+                r = ex.set_leverage(symbol, int(lev))
+                if r.get("clamped"):
+                    log(f"⚠ {symbol} 杠杆被降到 5x（子账户限制），请求的是 {lev}x")
                 self._lev_set.add(symbol)
             except Exception as e:  # noqa: BLE001
                 log(f"set leverage failed {symbol}: {e}")
