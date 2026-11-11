@@ -400,7 +400,19 @@ class App:
                     "第一周建议：单笔 ≤5U、日亏 ≤5U、只跟 1 个带单员。\n"
                     "确认要切到实盘模式吗？"):
                 self.cb_exec_mode.set(list(self._mode_labels)[0])
+                target = "shadow"
+        self._persist_exec_mode(target)
         self._refresh_exec_warn()
+
+    def _persist_exec_mode(self, mode: str) -> None:
+        """切换模式立刻写入配置，避免界面显示和文件不一致。"""
+        try:
+            path = ROOT / "gui" / "copy_config.json"
+            cfg = self._load_copy_cfg()
+            cfg["mode"] = mode
+            path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:  # noqa: BLE001
+            self._append(f"保存模式失败：{e}", "err")
 
     def _refresh_exec_warn(self) -> None:
         target = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
@@ -817,10 +829,9 @@ class App:
         stream = getattr(proc, "stdout", None)
         if stream is None:
             return
-        tag = self.JOB_LABEL.get(name, name)
         try:
             for line in stream:
-                self.q.put(("log", f"[{tag}] {line.rstrip()}"))
+                self.q.put(("log", line.rstrip()))
         except Exception:  # noqa: BLE001
             pass
 

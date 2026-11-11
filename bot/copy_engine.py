@@ -357,7 +357,8 @@ class CopyEngine:
         rp = float(sig.get("realized_pnl") or 0)
         kind = "open" if rp == 0 else "close"
 
-        age_ms = max(0, int(time.time() * 1000) - int(sig.get("trade_time") or 0))
+        now_ms = int(sig.get("recv_synced") or (time.time() * 1000))
+        age_ms = max(0, now_ms - int(sig.get("trade_time") or 0))
         if age_ms > self.cfg["max_signal_age_s"] * 1000:
             self._reject(sig, "stale", f"信号已 {age_ms}ms")
             return

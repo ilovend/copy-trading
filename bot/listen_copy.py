@@ -365,6 +365,7 @@ def handle(msg: dict, pid: str, nickname: str, lead: str | None) -> None:
                 "order_id": o.get("i"),
                 "trade_time": int(o.get("T") or 0),
                 "recv": int(time.time() * 1000),
+                "recv_synced": int(time.time() * 1000 + CLOCK_OFFSET_MS),
             })
         except Exception as e:  # noqa: BLE001
             log(f"signal hook error: {e}")
