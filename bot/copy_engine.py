@@ -34,6 +34,7 @@ DEFAULTS = {
     "k": 1.0,
     "exec_equity": 50.0,
     "margin_per_trade": 5.0,
+    "fixed_notional_usdt": 5.0,   # 每笔固定名义（用户视角最直观）
     "leverage": 20,
     "leverage_mode": "fixed",   # fixed | follow_lead
     "manage_leverage": True,    # 下单前是否修改账户杠杆（会改全局设置）
@@ -471,6 +472,10 @@ class CopyEngine:
             eq_c = self._mirror_equity(sig["portfolio"])
             ratio = (self.cfg["exec_equity"] / eq_c) if eq_c > 0 else 0.0
             qty_target = qty_mirror * ratio * self.cfg["k"]
+        elif mode == "fixed_notional":
+            ratio = 0.0
+            notional = float(self.cfg.get("fixed_notional_usdt") or 5.0)
+            qty_target = (notional / price) if price > 0 else 0.0
         elif mode == "fixed_multiple":
             ratio = self.cfg["k"]
             qty_target = qty_mirror * self.cfg["k"]

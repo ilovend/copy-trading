@@ -219,31 +219,81 @@ class App:
                   justify="left").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self._refresh_exec_warn()
 
+        simple = ttk.LabelFrame(parent, text="跟单设置（推荐）", padding=12)
+        simple.pack(fill="x", pady=(0, 8))
+        ttk.Label(simple, text="执行资金 (U)", width=18, foreground="#666").grid(
+            row=0, column=0, sticky="w", pady=3)
+        self.sv_equity = tk.StringVar(value=str(cfg.get("exec_equity", 100)))
+        ttk.Entry(simple, textvariable=self.sv_equity, width=30).grid(row=0, column=1, sticky="w")
+
+        ttk.Label(simple, text="跟单方式", width=18, foreground="#666").grid(
+            row=1, column=0, sticky="w", pady=3)
+        self._method_labels = {"按比例跟（推荐）": "ratio", "每笔固定金额": "fixed"}
+        cur_m = "fixed" if cfg.get("ratio_mode") == "fixed_notional" else "ratio"
+        self.cb_method = ttk.Combobox(simple, values=list(self._method_labels),
+                                      state="readonly", width=27)
+        self.cb_method.set(next((k for k, v in self._method_labels.items() if v == cur_m),
+                                "按比例跟（推荐）"))
+        self.cb_method.grid(row=1, column=1, sticky="w", pady=3)
+        self.cb_method.bind("<<ComboboxSelected>>", lambda _e: self._refresh_simple())
+
+        ttk.Label(simple, text="每笔固定金额 (U)", width=18, foreground="#666").grid(
+            row=2, column=0, sticky="w", pady=3)
+        self.sv_fixed = tk.StringVar(value=str(cfg.get("fixed_notional_usdt", 5)))
+        self.e_fixed = ttk.Entry(simple, textvariable=self.sv_fixed, width=30)
+        self.e_fixed.grid(row=2, column=1, sticky="w", pady=3)
+
+        ttk.Label(simple, text="单笔上限 (U)", width=18, foreground="#666").grid(
+            row=3, column=0, sticky="w", pady=3)
+        self.sv_cap = tk.StringVar(value=str(cfg.get("max_order_notional", 5)))
+        ttk.Entry(simple, textvariable=self.sv_cap, width=30).grid(row=3, column=1, sticky="w")
+
+        ttk.Label(simple, foreground="#777", wraplength=800, justify="left", text=(
+            "总敞口、单币上限、滑点、杠杆会自动按安全值设置；"
+            "需要逐项调整就勾选下面的「显示高级设置」。"
+        )).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        keys = ttk.LabelFrame(parent, text="执行账户（实盘必填，只存 .env）", padding=10)
+        keys.pack(fill="x", pady=(0, 8))
+        self._cfg_entry(keys, 0, "API Key", "exec_api_key", cfg, "币安 API 管理创建", show="*")
+        self._cfg_entry(keys, 1, "API Secret", "exec_api_secret", cfg, "关闭提现权限", show="*")
+
+        outer = parent
+        self.var_adv = tk.BooleanVar(value=bool(cfg.get("show_advanced", False)))
+        ttk.Checkbutton(parent, text="显示高级设置（比例、风控、滑点、杠杆细节）",
+                        variable=self.var_adv,
+                        command=self._toggle_adv).pack(anchor="w", pady=(0, 8))
+
+        self.adv_box = ttk.Frame(parent)
+        self.adv_box.pack(fill="x")
+        if not self.var_adv.get():
+            self.adv_box.pack_forget()
+        parent = self.adv_box
+        self._refresh_simple()
+
         acct = ttk.LabelFrame(parent, text="执行账户", padding=12)
         acct.pack(fill="x")
-        self._cfg_entry(acct, 0, "API Key", "exec_api_key", cfg, "实盘必填，只存 .env", show="*")
-        self._cfg_entry(acct, 1, "API Secret", "exec_api_secret", cfg, "实盘必填，只存 .env", show="*")
-        self._cfg_entry(acct, 2, "执行账户权益 (U)", "exec_equity", cfg, "手填当前权益，比如 50")
-        self._cfg_entry(acct, 3, "杠杆", "leverage", cfg, "子账户最高 5x；实盘建议用主账户")
+        self._cfg_entry(acct, 0, "执行账户权益 (U)", "exec_equity", cfg, "手填当前权益，比如 50")
+        self._cfg_entry(acct, 1, "杠杆", "leverage", cfg, "子账户最高 5x；实盘建议用主账户")
 
         ttk.Label(acct, text="杠杆模式", width=18, foreground="#666").grid(
-            row=4, column=0, sticky="w", pady=3)
+            row=2, column=0, sticky="w", pady=3)
         self._levmode_labels = {"固定（用上面的杠杆）": "fixed", "跟随带单员": "follow_lead"}
         cur_lev = cfg.get("leverage_mode", "fixed")
         self.cb_lev_mode = ttk.Combobox(acct, values=list(self._levmode_labels),
                                         state="readonly", width=27)
         self.cb_lev_mode.set(next((k for k, v in self._levmode_labels.items() if v == cur_lev),
                                   "固定（用上面的杠杆）"))
-        self.cb_lev_mode.grid(row=4, column=1, sticky="w", pady=3)
+        self.cb_lev_mode.grid(row=2, column=1, sticky="w", pady=3)
         ttk.Label(acct, text="只影响保证金与强平线，不改变下单数量；读不到则回退",
-                  foreground="#999").grid(row=4, column=2, sticky="w", padx=(8, 0))
+                  foreground="#999").grid(row=2, column=2, sticky="w", padx=(8, 0))
 
         self.var_manage_lev = tk.BooleanVar(value=bool(cfg.get("manage_leverage", True)))
         ttk.Checkbutton(acct, text="下单前设置该币种杠杆（会改动账户全局设置）",
-                        variable=self.var_manage_lev).grid(row=5, column=0, columnspan=3,
+                        variable=self.var_manage_lev).grid(row=3, column=0, columnspan=3,
                                                            sticky="w", pady=(6, 0))
-        self._cfg_entry(acct, 6, "单笔上限 (U)", "max_order_notional", cfg, "单笔名义不超过这个")
-        self._cfg_entry(acct, 7, "总敞口上限 (U)", "max_total_notional", cfg, "所有持仓名义合计")
+        self._cfg_entry(acct, 4, "单笔上限 (U)", "max_order_notional", cfg, "单笔名义不超过这个")
+        self._cfg_entry(acct, 5, "总敞口上限 (U)", "max_total_notional", cfg, "所有持仓名义合计")
 
         ratio = ttk.LabelFrame(parent, text="比例与风控", padding=12)
         ratio.pack(fill="x", pady=(12, 0))
@@ -251,6 +301,7 @@ class App:
         self.var_ratio_mode = tk.StringVar()
         self._ratio_labels = {
             "净值比（执行权益 / 镜像净投入）": "net_equity",
+            "每笔固定名义（U）": "fixed_notional",
             "固定倍数（镜像数量 × k）": "fixed_multiple",
             "固定保证金（每笔固定保证金 × 杠杆）": "fixed_margin",
         }
@@ -275,7 +326,7 @@ class App:
                         variable=self.var_bump).grid(row=6, column=0, columnspan=3,
                                                      sticky="w", pady=(8, 0))
 
-        btns = ttk.Frame(parent)
+        btns = ttk.Frame(outer)
         btns.pack(fill="x", pady=(14, 0))
         ttk.Button(btns, text="保存配置", command=self.save_copy_cfg).pack(side="left")
         ttk.Button(btns, text="测试连接", command=self.test_exec).pack(side="left", padx=8)
@@ -314,6 +365,9 @@ class App:
         elif mode == "fixed_multiple":
             self.var_mode_hint.set(
                 "固定倍数：手数 = 镜像数量 × k。只用到「系数 k」，跟两边资金多少无关。")
+        elif mode == "fixed_notional":
+            self.var_mode_hint.set(
+                "每笔固定名义：不管镜像开多大，每笔都按「每笔固定金额」下单（受最小名义约束）。")
         else:
             self.var_mode_hint.set(
                 "固定保证金：名义 = 每笔保证金 × 上面填的杠杆，手数 = 名义 ÷ 价格。"
@@ -397,8 +451,80 @@ class App:
         defaults["exec_api_secret"] = os.environ.get("EXEC_API_SECRET", "")
         return defaults
 
+    def _refresh_simple(self) -> None:
+        fixed = self._method_labels.get(self.cb_method.get(), "ratio") == "fixed"
+        self.e_fixed.configure(state="normal" if fixed else "disabled")
+
+    def _toggle_adv(self) -> None:
+        if self.var_adv.get():
+            self._sync_adv_from_cfg()
+            self.adv_box.pack(fill="x")
+        else:
+            self.adv_box.pack_forget()
+
+    def _sync_adv_from_cfg(self) -> None:
+        """切到高级模式时，用配置文件刷新控件，避免显示旧值。"""
+        cfg = self._load_copy_cfg()
+        for key, var in self.copy_vars.items():
+            if key in ("exec_api_key", "exec_api_secret"):
+                continue
+            if key in cfg and cfg[key] is not None:
+                var.set(str(cfg[key]))
+        mode = cfg.get("ratio_mode", "net_equity")
+        label = next((k for k, v in self._ratio_labels.items() if v == mode), None)
+        if label:
+            self.cb_ratio.set(label)
+        self.var_bump.set(bool(cfg.get("min_notional_bump", True)))
+        lev_mode = cfg.get("leverage_mode", "fixed")
+        lv_label = next((k for k, v in self._levmode_labels.items() if v == lev_mode), None)
+        if lv_label:
+            self.cb_lev_mode.set(lv_label)
+        self.var_manage_lev.set(bool(cfg.get("manage_leverage", True)))
+        self._apply_ratio_mode()
+        self._refresh_exec_warn()
+
     def save_copy_cfg(self) -> None:
         cfg = self._load_copy_cfg()
+        if not self.var_adv.get():
+            # 简易模式：只认 3 件事，其余按安全默认推导
+            try:
+                eq = float(self.sv_equity.get())
+                cap = float(self.sv_cap.get())
+                fixed = float(self.sv_fixed.get())
+            except ValueError:
+                messagebox.showwarning("格式错误", "执行资金 / 每笔金额 / 单笔上限 需要数字")
+                return
+            method = self._method_labels.get(self.cb_method.get(), "ratio")
+            cfg["exec_equity"] = eq
+            cfg["max_order_notional"] = cap
+            cfg["max_total_notional"] = round(eq * 0.4, 2)
+            cfg["max_symbol_pct"] = 40.0
+            cfg["leverage_mode"] = "fixed"
+            cfg["manage_leverage"] = False
+            cfg["min_notional_bump"] = True
+            cfg["k"] = 1.0
+            if method == "fixed":
+                cfg["ratio_mode"] = "fixed_notional"
+                cfg["fixed_notional_usdt"] = fixed
+                if fixed > cap:
+                    cfg["max_order_notional"] = fixed
+            else:
+                cfg["ratio_mode"] = "net_equity"
+            cfg["mode"] = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
+            cfg["show_advanced"] = False
+            self._upsert_env({
+                "EXEC_API_KEY": self.copy_vars["exec_api_key"].get().strip(),
+                "EXEC_API_SECRET": self.copy_vars["exec_api_secret"].get().strip(),
+            })
+            cfg.pop("exec_api_key", None)
+            cfg.pop("exec_api_secret", None)
+            path = ROOT / "gui" / "copy_config.json"
+            path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._append(f"已保存：执行 {eq:g}U，"
+                         f"{'每笔 ' + format(fixed, 'g') + 'U' if method == 'fixed' else '按比例'}，"
+                         f"单笔上限 {cfg['max_order_notional']:g}U", "ok")
+            return
+
         for key, var in self.copy_vars.items():
             raw = var.get().strip()
             if key in ("exec_api_key", "exec_api_secret"):
@@ -413,6 +539,7 @@ class App:
         cfg["mode"] = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
         cfg["leverage_mode"] = self._levmode_labels.get(self.cb_lev_mode.get(), "fixed")
         cfg["manage_leverage"] = bool(self.var_manage_lev.get())
+        cfg["show_advanced"] = True
         # 密钥只写 .env，JSON 里不落地
         self._upsert_env({
             "EXEC_API_KEY": self.copy_vars["exec_api_key"].get().strip(),
@@ -609,8 +736,8 @@ class App:
 
         threading.Thread(target=work, daemon=True).start()
 
-
     # ------------------------------------------------------------- 推送 tab
+
     def _build_push(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="推送渠道", font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
 
