@@ -35,6 +35,7 @@ DEFAULTS = {
     "exec_equity": 50.0,
     "margin_per_trade": 5.0,
     "leverage": 20,
+    "leverage_mode": "fixed",   # fixed | follow_lead
     "max_order_notional": 10.0,
     "max_symbol_pct": 25.0,
     "max_total_notional": 40.0,
@@ -110,6 +111,9 @@ class CopyEngine:
         self._total_exposure = 0.0
         self._pos: dict[tuple[str, str], float] = {}
         self._hedge: bool | None = None
+        self._lead_lev: dict[tuple[str, str], tuple[float, float]] = {}
+        self._lev_plan: dict[str, int] = {}
+        self._lev_logged: dict[str, int] = {}
         self._mirror_pos: dict[tuple[str, str], float] = {}
         self._pending_reduce: dict[tuple[str, str], float] = {}
         self._pending: dict[tuple, dict] = {}
@@ -241,6 +245,46 @@ class CopyEngine:
         n = round(price / tick)
         return round(n * tick, 10)
 
+    def _lead_leverage(self, portfolio: str, symbol: str) -> float:
+        """从镜像持仓里读该币种的杠杆；读不到返回 0。
+
+        镜像仓位的杠杆就是带单员开这一单时用的杠杆，币安跟单会保持一致。
+        结果缓存 60 秒，避免每笔信号都多打一次接口。
+        """
+        key = (portfolio, symbol)
+        now = time.time()
+        hit = self._lead_lev.get(key)
+        if hit and now - hit[0] < 60:
+            return hit[1]
+        lev = 0.0
+        try:
+            from listen_copy import api
+            j = api("/bapi/futures/v6/private/future/user-data/user-position", "POST",
+                    {"copyTradeType": "COPY", "portfolioId": portfolio})
+            for row in (j.get("data") or []):
+                if row.get("symbol") != symbol:
+                    continue
+                lev = float(row.get("leverage") or row.get("lever") or 0)
+                if lev > 0:
+                    break
+        except Exception as e:  # noqa: BLE001
+            log(f"读带单员杠杆失败 {symbol}: {e}")
+        self._lead_lev[key] = (now, lev)
+        return lev
+
+    def _effective_leverage(self, sig: dict, symbol: str) -> int:
+        base = int(self.cfg.get("leverage") or 20)
+        if self.cfg.get("leverage_mode") != "follow_lead":
+            return base
+        lev = self._lead_leverage(sig.get("portfolio") or "", symbol)
+        if lev > 0:
+            if self._lev_logged.get(symbol) != int(lev):
+                log(f"跟随带单员杠杆 {symbol}={lev:g}x")
+                self._lev_logged[symbol] = int(lev)
+            return int(lev)
+        log(f"带单员杠杆未知 {symbol}，回退到 {base}x")
+        return base
+
     def _is_hedge(self) -> bool:
         if self._hedge is None:
             try:
@@ -295,7 +339,7 @@ class CopyEngine:
     def _send_order(self, params: dict) -> dict:
         ex = self._exec()
         symbol = params["symbol"]
-        lev = self.cfg.get("leverage")
+        lev = self._lev_plan.get(symbol) or self.cfg.get("leverage")
         if lev and symbol not in self._lev_set:
             try:
                 ex.set_leverage(symbol, int(lev))
@@ -418,6 +462,8 @@ class CopyEngine:
 
         flt = self._symbol_filter(symbol)
         mode = self.cfg["ratio_mode"]
+        if symbol not in self._lev_plan:
+            self._lev_plan[symbol] = self._effective_leverage(sig, symbol)
         if mode == "net_equity":
             eq_c = self._mirror_equity(sig["portfolio"])
             ratio = (self.cfg["exec_equity"] / eq_c) if eq_c > 0 else 0.0
@@ -427,7 +473,9 @@ class CopyEngine:
             qty_target = qty_mirror * self.cfg["k"]
         else:
             ratio = 0.0
-            notional = self.cfg["margin_per_trade"] * self.cfg["leverage"]
+            lev_eff = self._effective_leverage(sig, symbol)
+            self._lev_plan[symbol] = lev_eff
+            notional = self.cfg["margin_per_trade"] * lev_eff
             qty_target = (notional / price) if price > 0 else 0.0
 
         if price > 0:
@@ -574,6 +622,7 @@ class CopyEngine:
             "qty_mirror": qty_mirror,
             "price_signal": price,
             "ratio_mode": mode,
+            "leverage": self._lev_plan.get(symbol),
             "ratio": round(ratio, 4),
             "qty_target": qty_target,
             "notional": round(notional, 4),

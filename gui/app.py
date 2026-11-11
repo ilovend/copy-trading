@@ -200,6 +200,18 @@ class App:
         self._cfg_entry(acct, 1, "API Secret", "exec_api_secret", cfg, "接入实盘时填（当前不用）", show="*")
         self._cfg_entry(acct, 2, "执行账户权益 (U)", "exec_equity", cfg, "手填当前权益，比如 50")
         self._cfg_entry(acct, 3, "杠杆", "leverage", cfg, "子账户最高 5x；实盘建议用主账户")
+
+        ttk.Label(acct, text="杠杆模式", width=18, foreground="#666").grid(
+            row=4, column=0, sticky="w", pady=3)
+        self._levmode_labels = {"固定（用上面的杠杆）": "fixed", "跟随带单员": "follow_lead"}
+        cur_lev = cfg.get("leverage_mode", "fixed")
+        self.cb_lev_mode = ttk.Combobox(acct, values=list(self._levmode_labels),
+                                        state="readonly", width=27)
+        self.cb_lev_mode.set(next((k for k, v in self._levmode_labels.items() if v == cur_lev),
+                                  "固定（用上面的杠杆）"))
+        self.cb_lev_mode.grid(row=4, column=1, sticky="w", pady=3)
+        ttk.Label(acct, text="跟随模式下读不到带单员杠杆会回退到上面填的值",
+                  foreground="#999").grid(row=4, column=2, sticky="w", padx=(8, 0))
         self._cfg_entry(acct, 4, "单笔上限 (U)", "max_order_notional", cfg, "单笔名义不超过这个")
         self._cfg_entry(acct, 5, "总敞口上限 (U)", "max_total_notional", cfg, "所有持仓名义合计")
 
@@ -325,6 +337,7 @@ class App:
         cfg["ratio_mode"] = self._ratio_labels.get(self.cb_ratio.get(), "net_equity")
         cfg["min_notional_bump"] = bool(self.var_bump.get())
         cfg["mode"] = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
+        cfg["leverage_mode"] = self._levmode_labels.get(self.cb_lev_mode.get(), "fixed")
         path = ROOT / "gui" / "copy_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         self._append(f"复制配置已保存：{cfg['ratio_mode']} k={cfg['k']} "
