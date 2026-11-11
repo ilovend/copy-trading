@@ -199,7 +199,7 @@ class App:
         self._cfg_entry(acct, 0, "API Key", "exec_api_key", cfg, "接入实盘时填（当前不用）", show="*")
         self._cfg_entry(acct, 1, "API Secret", "exec_api_secret", cfg, "接入实盘时填（当前不用）", show="*")
         self._cfg_entry(acct, 2, "执行账户权益 (U)", "exec_equity", cfg, "手填当前权益，比如 50")
-        self._cfg_entry(acct, 3, "杠杆", "leverage", cfg, "固定保证金模式用它算名义")
+        self._cfg_entry(acct, 3, "杠杆", "leverage", cfg, "子账户最高 5x；实盘建议用主账户")
         self._cfg_entry(acct, 4, "单笔上限 (U)", "max_order_notional", cfg, "单笔名义不超过这个")
         self._cfg_entry(acct, 5, "总敞口上限 (U)", "max_total_notional", cfg, "所有持仓名义合计")
 

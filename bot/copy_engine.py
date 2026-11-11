@@ -298,12 +298,11 @@ class CopyEngine:
         lev = self.cfg.get("leverage")
         if lev and symbol not in self._lev_set:
             try:
-                r = ex.set_leverage(symbol, int(lev))
-                if r.get("clamped"):
-                    log(f"⚠ {symbol} 杠杆被降到 5x（子账户限制），请求的是 {lev}x")
+                ex.set_leverage(symbol, int(lev))
                 self._lev_set.add(symbol)
             except Exception as e:  # noqa: BLE001
-                log(f"set leverage failed {symbol}: {e}")
+                # 杠杆设置失败不阻断下单，但必须让人看到
+                log(f"⚠ 杠杆设置失败 {symbol}: {e}")
         return ex.order(symbol, params["side"], params["qty"],
                         order_type=params["type"], price=params["price"],
                         time_in_force=params["timeInForce"],
