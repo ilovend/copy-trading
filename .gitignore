@@ -18,6 +18,7 @@ gui/autojoin_config.json
 bot/data/
 dist/
 probe/out/
+docs/screenshots/
 
 # ---- scratch / research scripts (contain local ids / router secret) ----
 probe/*

@@ -1,0 +1,3 @@
+# 运行依赖（Python 3.10+）
+websockets>=12
+sv-ttk>=2.6

@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bot"))
 
 import listen_copy as L
+import theme  # noqa: E402
 from version import __version__ as VERSION  # noqa: E402
 
 STATE_PATH = ROOT / "gui" / "state.json"
@@ -45,8 +46,11 @@ class App:
         self.rows: list[dict] = []
         self.monitored: set[str] = set()
         self.copied: set[str] = set()
+        self.theme_mode = self._load_theme()
+        self.theme_mode = theme.apply(self.root, self.theme_mode)
         self._build()
         self._load_state()
+        root.after(150, root.focus_set)        # 别让首个控件带蓝色选中态
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.after(120, self._drain)
         root.after(600, self._poll)
@@ -58,21 +62,17 @@ class App:
         self.root.geometry("1180x800")
         self.root.minsize(980, 660)
 
-        style = ttk.Style(self.root)
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        style.configure("Treeview", rowheight=27)
-        style.configure("Treeview.Heading", font=("Microsoft YaHei UI", 9, "bold"))
-        style.configure("TButton", padding=(10, 6))
-        style.configure("TNotebook.Tab", padding=(18, 8))
-
-        head = ttk.Frame(self.root, padding=(14, 12, 14, 4))
+        head = ttk.Frame(self.root, padding=(16, 14, 16, 6))
         head.pack(fill="x")
-        ttk.Label(head, text="币安跟单控制台",
-                  font=("Microsoft YaHei UI", 15, "bold")).pack(side="left")
-        ttk.Label(head, text="    监控 / 复制 / 推送", foreground="#777").pack(side="left")
+        ttk.Label(head, text="币安跟单控制台", style="Title.TLabel").pack(side="left")
+        ttk.Label(head, text="监控 / 复制 / 推送", style="Hint.TLabel").pack(
+            side="left", padx=(12, 0), pady=(4, 0))
+        self.var_dark = tk.BooleanVar(value=self.theme_mode == "dark")
+        ttk.Checkbutton(head, text="深色模式", style="Switch.TCheckbutton",
+                        variable=self.var_dark,
+                        command=self.toggle_theme).pack(side="right")
+        ttk.Label(head, text=f"v{VERSION}", style="Dim.TLabel").pack(
+            side="right", padx=(0, 16), pady=(4, 0))
 
         self.nb = ttk.Notebook(self.root)
         self.nb.pack(fill="both", expand=True, padx=12, pady=(4, 12))
@@ -97,10 +97,11 @@ class App:
         bar = ttk.Frame(parent)
         bar.pack(fill="x")
         ttk.Button(bar, text="刷新列表", command=self.refresh).pack(side="left")
-        ttk.Button(bar, text="启动", command=self.start_session).pack(side="left", padx=6)
+        ttk.Button(bar, text="启动", style="Accent.TButton",
+                   command=self.start_session).pack(side="left", padx=6)
         ttk.Button(bar, text="停止", command=self.stop_session).pack(side="left")
         self.var_hint = tk.StringVar(value="点列表里的「监控 / 复制」切换")
-        ttk.Label(bar, textvariable=self.var_hint, foreground="#777").pack(side="left", padx=12)
+        ttk.Label(bar, textvariable=self.var_hint, style="Hint.TLabel").pack(side="left", padx=12)
         ttk.Button(bar, text="更新登录态", command=self.update_session).pack(side="right")
         ttk.Button(bar, text="打开数据目录", command=self.open_data).pack(side="right", padx=6)
 
@@ -127,24 +128,32 @@ class App:
 
         box = ttk.LabelFrame(right, text="运行状态", padding=10)
         box.pack(fill="x")
-        self.var_status = tk.StringVar(value="未运行")
-        self.var_copy = tk.StringVar(value="未运行")
-        self.var_join = tk.StringVar(value="未运行")
+        self.var_status = tk.StringVar(value="○ 未运行")
+        self.var_copy = tk.StringVar(value="○ 未运行")
+        self.var_join = tk.StringVar(value="○ 未运行")
         self.var_tg = tk.StringVar()
         self.var_proxy = tk.StringVar()
         self.var_session = tk.StringVar()
-        for label, var in (("监控", self.var_status), ("复制", self.var_copy),
-                           ("自动跟单", self.var_join), ("推送", self.var_tg),
-                           ("代理", self.var_proxy), ("登录态", self.var_session)):
+        self.status_labels: dict[str, ttk.Label] = {}
+        for key, label, var in (("monitor", "监控", self.var_status),
+                                ("copy", "复制", self.var_copy),
+                                ("autojoin", "自动跟单", self.var_join),
+                                ("push", "推送", self.var_tg),
+                                ("proxy", "代理", self.var_proxy),
+                                ("session", "登录态", self.var_session)):
             row = ttk.Frame(box)
             row.pack(fill="x", pady=2)
-            ttk.Label(row, text=label, width=9, foreground="#666").pack(side="left")
-            ttk.Label(row, textvariable=var).pack(side="left")
+            ttk.Label(row, text=label, width=9, style="Muted.TLabel").pack(side="left")
+            lbl = ttk.Label(row, textvariable=var)
+            lbl.pack(side="left")
+            self.status_labels[key] = lbl
 
         tips = ttk.LabelFrame(right, text="说明", padding=10)
         tips.pack(fill="both", expand=True, pady=(10, 0))
-        ttk.Label(tips, justify="left", foreground="#555", wraplength=360, text=(
+        ttk.Label(tips, justify="left", style="Hint.TLabel", wraplength=370, text=(
             "· 这里监听的是「你自己的跟单组合」的实时成交。\n"
+            "· 复制自带监听：启动后「监控」显示「随复制运行」，\n"
+            "  无需（也不能）再单独启动监控。\n"
             "· WebSocket 走 /private/stream，实测延迟约 100ms。\n"
             "· Ctrl / Shift 可多选带单员。\n"
             "· 登录态 2–3 天过期一次，点「更新登录态」即可。\n"
@@ -153,15 +162,37 @@ class App:
 
         logframe = ttk.LabelFrame(parent, text="实时日志", padding=(8, 6))
         logframe.pack(fill="both", expand=True)
-        self.log = tk.Text(logframe, height=9, wrap="none", bg="#111418", fg="#c9d1d9",
-                           insertbackground="#c9d1d9", font=("Consolas", 10), relief="flat")
+        self.log = tk.Text(logframe, height=9, wrap="none", font=(theme.MONO, 10),
+                           relief="flat", borderwidth=0, padx=8, pady=6)
         lsb = ttk.Scrollbar(logframe, orient="vertical", command=self.log.yview)
         self.log.configure(yscrollcommand=lsb.set)
         self.log.pack(side="left", fill="both", expand=True)
         lsb.pack(side="right", fill="y")
-        for tag, color in (("info", "#9aa4b2"), ("ok", "#4ade80"), ("warn", "#fbbf24"),
-                           ("err", "#f87171"), ("fill", "#38bdf8"), ("close", "#fb7185")):
-            self.log.tag_config(tag, foreground=color)
+        self._apply_theme_widgets()
+
+    def _apply_theme_widgets(self) -> None:
+        """tk.Text 和 Treeview 不受 ttk 样式控制，切主题时要单独刷新。"""
+        p = theme.palette(self.theme_mode)
+        self.log.configure(bg=p["log_bg"], fg=p["log_fg"],
+                           insertbackground=p["log_fg"],
+                           selectbackground=p["log_sel"], selectforeground=p["fg"])
+        for tag, key in (("info", "log_info"), ("ok", "log_ok"), ("warn", "log_warn"),
+                         ("err", "log_err"), ("fill", "log_fill"), ("close", "log_close")):
+            self.log.tag_config(tag, foreground=p[key])
+        self.tree.tag_configure("stripe", background=p["stripe"])
+        self._restripe()
+
+    def _restripe(self) -> None:
+        """隔行浅底，长列表更好扫读。"""
+        for i, iid in enumerate(self.tree.get_children()):
+            self.tree.item(iid, tags=("stripe",) if i % 2 else ())
+
+    def toggle_theme(self) -> None:
+        self.theme_mode = theme.apply(
+            self.root, "dark" if self.var_dark.get() else "light")
+        self.var_dark.set(self.theme_mode == "dark")   # 没装 sv-ttk 时会被强制浅色
+        self._apply_theme_widgets()
+        self._save_state()
 
     # ------------------------------------------------------------- 复制 tab
     def _scroll_area(self, parent: ttk.Frame) -> ttk.Frame:
@@ -193,8 +224,8 @@ class App:
         self.copy_vars: dict[str, tk.StringVar] = {}
 
         ttk.Label(parent, text="仓位复制",
-                  font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
-        ttk.Label(parent, foreground="#777", justify="left", wraplength=760, text=(
+                  style="Section.TLabel").pack(anchor="w")
+        ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=760, text=(
             "先在「运行模式」里选影子 / 干跑 / 实盘，改完参数点「保存配置」，"
             "再回「仓位监控」页点「启动」。"
         )).pack(anchor="w", pady=(2, 10))
@@ -215,18 +246,18 @@ class App:
         self.cb_exec_mode.grid(row=0, column=0, sticky="w")
         self.cb_exec_mode.bind("<<ComboboxSelected>>", self._on_exec_mode_change)
         self.var_exec_warn = tk.StringVar(value="")
-        ttk.Label(mode_box, textvariable=self.var_exec_warn, foreground="#c0392b",
+        ttk.Label(mode_box, textvariable=self.var_exec_warn, style="Danger.TLabel",
                   justify="left").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self._refresh_exec_warn()
 
         simple = ttk.LabelFrame(parent, text="跟单设置（推荐）", padding=12)
         simple.pack(fill="x", pady=(0, 8))
-        ttk.Label(simple, text="执行资金 (U)", width=18, foreground="#666").grid(
+        ttk.Label(simple, text="执行资金 (U)", width=18, style="Muted.TLabel").grid(
             row=0, column=0, sticky="w", pady=3)
         self.sv_equity = tk.StringVar(value=str(cfg.get("exec_equity", 100)))
         ttk.Entry(simple, textvariable=self.sv_equity, width=30).grid(row=0, column=1, sticky="w")
 
-        ttk.Label(simple, text="跟单方式", width=18, foreground="#666").grid(
+        ttk.Label(simple, text="跟单方式", width=18, style="Muted.TLabel").grid(
             row=1, column=0, sticky="w", pady=3)
         self._method_labels = {"按比例跟（推荐）": "ratio", "每笔固定金额": "fixed"}
         cur_m = "fixed" if cfg.get("ratio_mode") == "fixed_notional" else "ratio"
@@ -237,13 +268,13 @@ class App:
         self.cb_method.grid(row=1, column=1, sticky="w", pady=3)
         self.cb_method.bind("<<ComboboxSelected>>", lambda _e: self._refresh_simple())
 
-        ttk.Label(simple, text="每笔固定金额 (U)", width=18, foreground="#666").grid(
+        ttk.Label(simple, text="每笔固定金额 (U)", width=18, style="Muted.TLabel").grid(
             row=2, column=0, sticky="w", pady=3)
         self.sv_fixed = tk.StringVar(value=str(cfg.get("fixed_notional_usdt", 5)))
         self.e_fixed = ttk.Entry(simple, textvariable=self.sv_fixed, width=30)
         self.e_fixed.grid(row=2, column=1, sticky="w", pady=3)
 
-        ttk.Label(simple, text="单笔上限 (U)", width=18, foreground="#666").grid(
+        ttk.Label(simple, text="单笔上限 (U)", width=18, style="Muted.TLabel").grid(
             row=3, column=0, sticky="w", pady=3)
         self.sv_cap = tk.StringVar(value=str(cfg.get("max_order_notional", 5)))
         ttk.Entry(simple, textvariable=self.sv_cap, width=30).grid(row=3, column=1, sticky="w")
@@ -253,7 +284,7 @@ class App:
                         variable=self.var_push).grid(row=5, column=0, columnspan=3,
                                                      sticky="w", pady=(8, 0))
 
-        ttk.Label(simple, foreground="#777", wraplength=800, justify="left", text=(
+        ttk.Label(simple, style="Hint.TLabel", wraplength=800, justify="left", text=(
             "总敞口、单币上限、滑点、杠杆会自动按安全值设置；"
             "需要逐项调整就勾选下面的「显示高级设置」。"
         )).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
@@ -281,7 +312,7 @@ class App:
         self._cfg_entry(acct, 0, "执行账户权益 (U)", "exec_equity", cfg, "手填当前权益，比如 50")
         self._cfg_entry(acct, 1, "杠杆", "leverage", cfg, "子账户最高 5x；实盘建议用主账户")
 
-        ttk.Label(acct, text="杠杆模式", width=18, foreground="#666").grid(
+        ttk.Label(acct, text="杠杆模式", width=18, style="Muted.TLabel").grid(
             row=2, column=0, sticky="w", pady=3)
         self._levmode_labels = {"固定（用上面的杠杆）": "fixed", "跟随带单员": "follow_lead"}
         cur_lev = cfg.get("leverage_mode", "fixed")
@@ -292,7 +323,7 @@ class App:
         self.cb_lev_mode.grid(row=2, column=1, sticky="w", pady=3)
         self.cb_lev_mode.bind("<<ComboboxSelected>>", lambda _e: self._apply_ratio_mode())
         ttk.Label(acct, text="只影响保证金与强平线，不改变下单数量；读不到则回退",
-                  foreground="#999").grid(row=2, column=2, sticky="w", padx=(8, 0))
+                  style="Dim.TLabel").grid(row=2, column=2, sticky="w", padx=(8, 0))
 
         self.var_manage_lev = tk.BooleanVar(value=bool(cfg.get("manage_leverage", True)))
         ttk.Checkbutton(acct, text="下单前设置该币种杠杆（会改动账户全局设置）",
@@ -303,7 +334,7 @@ class App:
 
         ratio = ttk.LabelFrame(parent, text="比例与风控", padding=12)
         ratio.pack(fill="x", pady=(12, 0))
-        ttk.Label(ratio, text="比例模式", width=18, foreground="#666").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Label(ratio, text="比例模式", width=18, style="Muted.TLabel").grid(row=0, column=0, sticky="w", pady=3)
         self.var_ratio_mode = tk.StringVar()
         self._ratio_labels = {
             "净值比（执行权益 / 镜像净投入）": "net_equity",
@@ -341,9 +372,9 @@ class App:
 
         self.var_mode_hint = tk.StringVar(value="")
         ttk.Label(parent, textvariable=self.var_mode_hint,
-                  foreground="#666", justify="left").pack(anchor="w", pady=(10, 0))
+                  style="Muted.TLabel", justify="left").pack(anchor="w", pady=(10, 0))
 
-        ttk.Label(parent, foreground="#999", justify="left", wraplength=760, text=(
+        ttk.Label(parent, style="Dim.TLabel", justify="left", wraplength=760, text=(
             "三种模式都会把每笔意图写进 bot/data/intents-YYYYMMDD.jsonl，"
             "内容包括目标数量、盘口估算成交价、滑点 bps。跑一天再用「查看今日日报」评估。"
         )).pack(anchor="w", pady=(10, 0))
@@ -387,7 +418,7 @@ class App:
 
     def _cfg_entry(self, parent, row: int, label: str, key: str, cfg: dict,
                    hint: str = "", show: str = "") -> None:
-        ttk.Label(parent, text=label, width=18, foreground="#666").grid(
+        ttk.Label(parent, text=label, width=18, style="Muted.TLabel").grid(
             row=row, column=0, sticky="w", pady=3)
         var = tk.StringVar(value=str(cfg.get(key, "")))
         e = ttk.Entry(parent, textvariable=var, width=30, show=show)
@@ -396,9 +427,9 @@ class App:
             self.copy_entries = {}
         self.copy_entries[key] = e
         if show:
-            ttk.Label(parent, text=hint, foreground="#bbb").grid(row=row, column=2, sticky="w", padx=(10, 0))
+            ttk.Label(parent, text=hint, style="Dim.TLabel").grid(row=row, column=2, sticky="w", padx=(10, 0))
         elif hint:
-            ttk.Label(parent, text=hint, foreground="#aaa").grid(row=row, column=2, sticky="w", padx=(10, 0))
+            ttk.Label(parent, text=hint, style="Dim.TLabel").grid(row=row, column=2, sticky="w", padx=(10, 0))
         self.copy_vars[key] = var
 
     def _upsert_env(self, pairs: dict) -> None:
@@ -661,9 +692,9 @@ class App:
         if total == 0:
             self.var_hint.set("未勾选监控")
         elif copied:
-            self.var_hint.set(f"将启动：监控 + 复制（复制 {copied}/{total}）")
+            self.var_hint.set(f"将启动：复制 + 监听（监听跑在复制进程里，{copied}/{total} 个）")
         else:
-            self.var_hint.set(f"将启动：仅监控（{total} 个）")
+            self.var_hint.set(f"将启动：仅监听（{total} 个）")
 
     def start_session(self) -> None:
         ids = [pf["copyPortfolioId"] for pf in self.rows if pf["copyPortfolioId"] in self.monitored]
@@ -774,7 +805,7 @@ class App:
     # ------------------------------------------------------------- 推送 tab
 
     def _build_push(self, parent: ttk.Frame) -> None:
-        ttk.Label(parent, text="推送渠道", font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
+        ttk.Label(parent, text="推送渠道", style="Section.TLabel").pack(anchor="w")
 
         tg = ttk.LabelFrame(parent, text="Telegram（已接入）", padding=12)
         tg.pack(fill="x", pady=(8, 0))
@@ -783,7 +814,7 @@ class App:
         self.var_tg_proxy = tk.StringVar(value=L.TG_PROXY)
         self.var_tg_show = tk.BooleanVar(value=False)
 
-        ttk.Label(tg, text="Bot Token", width=12, foreground="#666").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Label(tg, text="Bot Token", width=12, style="Muted.TLabel").grid(row=0, column=0, sticky="w", pady=3)
         self.e_token = ttk.Entry(tg, textvariable=self.var_tg_token, width=62, show="*")
         self.e_token.grid(row=0, column=1, sticky="w", pady=3)
         ttk.Checkbutton(tg, text="显示", variable=self.var_tg_show,
@@ -791,24 +822,24 @@ class App:
                             show="" if self.var_tg_show.get() else "*")).grid(
             row=0, column=2, sticky="w", padx=(8, 0))
 
-        ttk.Label(tg, text="Chat ID", width=12, foreground="#666").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(tg, text="Chat ID", width=12, style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=3)
         ttk.Entry(tg, textvariable=self.var_tg_chat, width=62).grid(row=1, column=1, sticky="w", pady=3)
 
-        ttk.Label(tg, text="代理", width=12, foreground="#666").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(tg, text="代理", width=12, style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=3)
         ttk.Entry(tg, textvariable=self.var_tg_proxy, width=62).grid(row=2, column=1, sticky="w", pady=3)
         ttk.Label(tg, text="例 http://127.0.0.1:7890，留空直连",
-                  foreground="#999").grid(row=3, column=1, sticky="w")
+                  style="Dim.TLabel").grid(row=3, column=1, sticky="w")
 
         self.var_tg_result = tk.StringVar(value="")
         ttk.Label(tg, textvariable=self.var_tg_result,
-                  foreground="#0a7").grid(row=4, column=1, sticky="w", pady=(6, 0))
+                  style="Ok.TLabel").grid(row=4, column=1, sticky="w", pady=(6, 0))
 
         btns = ttk.Frame(tg)
         btns.grid(row=5, column=1, sticky="w", pady=(10, 0))
         ttk.Button(btns, text="测试发送", command=self.test_telegram).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="保存", command=self.save_telegram).pack(side="left")
 
-        ttk.Label(tg, foreground="#777", justify="left", wraplength=700, text=(
+        ttk.Label(tg, style="Hint.TLabel", justify="left", wraplength=700, text=(
             "Token：Telegram 搜 @BotFather → /newbot → 得到 123456789:AAH...\n"
             "Chat ID：Telegram 搜 @userinfobot → 发任意消息，它回复的数字\n"
             "建完机器人先给它发一句话，否则不能主动私聊你。"
@@ -825,9 +856,9 @@ class App:
             ttk.Checkbutton(other, text=label, variable=var, state="disabled").grid(
                 row=i, column=0, sticky="w", pady=3)
             ttk.Entry(other, width=40, state="disabled").grid(row=i, column=1, sticky="w", padx=(12, 8))
-            ttk.Label(other, text=hint, foreground="#999").grid(row=i, column=2, sticky="w")
+            ttk.Label(other, text=hint, style="Dim.TLabel").grid(row=i, column=2, sticky="w")
 
-        ttk.Label(parent, foreground="#999", justify="left", wraplength=720, text=(
+        ttk.Label(parent, style="Dim.TLabel", justify="left", wraplength=720, text=(
             "以后加渠道时，接口已经按「推送适配器」设计：监听器只产生事件，"
             "由这里决定发到哪些渠道，互不影响。"
         )).pack(anchor="w", pady=(12, 0))
@@ -851,17 +882,19 @@ class App:
 
         left = ttk.Frame(body)
         body.add(left, weight=3)
+        ttk.Label(left, text="勾选要监控的带单员（Ctrl / Shift 多选），名额出现时自动加入",
+                  style="Hint.TLabel").pack(anchor="w", pady=(0, 6))
+        tree_box = ttk.Frame(left)
+        tree_box.pack(fill="both", expand=True)
         cols = ("name", "lead", "slots")
-        self.fav_tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="extended")
-        for c, t, w in (("name", "带单员", 220), ("lead", "带单员ID", 210), ("slots", "名额", 110)):
+        self.fav_tree = ttk.Treeview(tree_box, columns=cols, show="headings", selectmode="extended")
+        for c, t, w in (("name", "带单员", 185), ("lead", "带单员ID", 195), ("slots", "名额", 85)):
             self.fav_tree.heading(c, text=t)
             self.fav_tree.column(c, width=w, anchor="w" if c == "name" else "center")
-        vsb = ttk.Scrollbar(left, orient="vertical", command=self.fav_tree.yview)
+        vsb = ttk.Scrollbar(tree_box, orient="vertical", command=self.fav_tree.yview)
         self.fav_tree.configure(yscrollcommand=vsb.set)
         self.fav_tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-        ttk.Label(left, text="选中要监控的人（可多选），名额出现时会自动加入",
-                  foreground="#999").pack(anchor="w", pady=(6, 0))
 
         right = ttk.Frame(body, padding=(14, 0, 0, 0))
         body.add(right, weight=2)
@@ -872,17 +905,17 @@ class App:
         self.aj_entries: dict[str, ttk.Entry] = {}
 
         def row(i: int, label: str, key: str, default: str) -> None:
-            ttk.Label(form, text=label, width=16, foreground="#666").grid(row=i, column=0, sticky="w", pady=3)
+            ttk.Label(form, text=label, width=14, style="Muted.TLabel").grid(row=i, column=0, sticky="w", pady=3)
             var = tk.StringVar(value=str(cfg.get("defaults", {}).get(key, default) or ""))
-            e = ttk.Entry(form, textvariable=var, width=22)
+            e = ttk.Entry(form, textvariable=var, width=18)
             e.grid(row=i, column=1, sticky="w", pady=3)
             self.aj_vars[key] = var
             self.aj_entries[key] = e
 
         row(0, "投资金额 (U)", "investAmount", "50")
-        ttk.Label(form, text="跟单模式", width=16, foreground="#666").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(form, text="跟单模式", width=14, style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=3)
         self.cb_copy_model = ttk.Combobox(form, values=["固定比例", "固定金额"],
-                                          state="readonly", width=19)
+                                          state="readonly", width=16)
         self.cb_copy_model.current(0 if cfg.get("defaults", {}).get("copyModel") == "FIXED_RATIO" else 1)
         self.cb_copy_model.grid(row=1, column=1, sticky="w", pady=3)
         row(2, "每笔金额 (U)", "costPerOrder", "0")
@@ -890,29 +923,29 @@ class App:
         row(4, "止盈 %", "takeProfitRate", "")
         row(5, "止损 %", "stopLostRate", "")
 
-        ttk.Label(form, text="保证金模式", width=16, foreground="#666").grid(row=6, column=0, sticky="w", pady=3)
-        self.cb_margin = ttk.Combobox(form, values=["跟随带单员", "全仓", "逐仓"], state="readonly", width=19)
+        ttk.Label(form, text="保证金模式", width=14, style="Muted.TLabel").grid(row=6, column=0, sticky="w", pady=3)
+        self.cb_margin = ttk.Combobox(form, values=["跟随带单员", "全仓", "逐仓"], state="readonly", width=16)
         self.cb_margin.current(0)
         self.cb_margin.grid(row=6, column=1, sticky="w", pady=3)
 
-        ttk.Label(form, text="杠杆模式", width=16, foreground="#666").grid(row=7, column=0, sticky="w", pady=3)
-        self.cb_leverage = ttk.Combobox(form, values=["跟随带单员", "固定杠杆"], state="readonly", width=19)
+        ttk.Label(form, text="杠杆模式", width=14, style="Muted.TLabel").grid(row=7, column=0, sticky="w", pady=3)
+        self.cb_leverage = ttk.Combobox(form, values=["跟随带单员", "固定杠杆"], state="readonly", width=16)
         self.cb_leverage.current(0)
         self.cb_leverage.grid(row=7, column=1, sticky="w", pady=3)
         row(8, "杠杆倍数", "leverageValue", "")
 
-        ttk.Label(form, text="检查间隔 (秒)", width=16, foreground="#666").grid(row=9, column=0, sticky="w", pady=3)
+        ttk.Label(form, text="检查间隔 (秒)", width=14, style="Muted.TLabel").grid(row=9, column=0, sticky="w", pady=3)
         self.var_poll = tk.StringVar(value=str(cfg.get("poll_interval", 1.0)))
-        ttk.Entry(form, textvariable=self.var_poll, width=22).grid(row=9, column=1, sticky="w", pady=3)
-        ttk.Label(form, text="0.5–5，越小越容易抢到名额", foreground="#aaa").grid(
-            row=9, column=2, sticky="w", padx=(8, 0))
+        ttk.Entry(form, textvariable=self.var_poll, width=18).grid(row=9, column=1, sticky="w", pady=3)
+        ttk.Label(form, text="0.5–5，越小越容易抢到名额", style="Dim.TLabel").grid(
+            row=10, column=0, columnspan=2, sticky="w")
 
         self.cb_copy_model.bind("<<ComboboxSelected>>", lambda _e: self._apply_aj_mode())
         self.cb_leverage.bind("<<ComboboxSelected>>", lambda _e: self._apply_aj_mode())
         self._apply_aj_mode()
 
         ttk.Button(right, text="保存配置", command=self.save_aj).pack(anchor="w", pady=(10, 0))
-        ttk.Label(right, foreground="#999", justify="left", wraplength=330, text=(
+        ttk.Label(right, style="Dim.TLabel", justify="left", wraplength=330, text=(
             "· 只对「收藏」里的带单员生效，先点刷新收藏\n"
             "· 名额满了会一直等，不消耗资金\n"
             "· 关闭「实际下单」时只推 Telegram，不真的加入"
@@ -1078,6 +1111,7 @@ class App:
             self._append("没有读到任何跟单组合（可能未跟单，或登录态已失效）", "warn")
         else:
             self._append(f"共 {len(rows)} 个跟单组合", "ok")
+        self._restripe()
         self._update_hint()
 
     def _selected_ids(self) -> list[str]:
@@ -1133,7 +1167,7 @@ class App:
         if name == "copy":
             mode_label = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
             extra = {"shadow": "影子", "live_dry": "干跑", "live": "实盘"}[mode_label]
-            self._append(f"启动复制（{extra}）："
+            self._append(f"启动复制（{extra}，含监听）："
                          f"{'全部组合' if not ids else '选中 ' + str(len(ids)) + ' 个'}", "ok")
         else:
             self._append(f"启动 {self.JOB_LABEL[name]}："
@@ -1184,9 +1218,23 @@ class App:
         self.root.after(800, self._poll)
 
     def _refresh_job_status(self) -> None:
-        self.var_status.set("运行中" if self._alive("monitor") else "未运行")
-        self.var_copy.set("运行中" if self._alive("copy") else "未运行")
-        self.var_join.set("运行中" if self._alive("autojoin") else "未运行")
+        """复制进程内部就会监听成交，所以复制在跑时「监控」算随复制托管。"""
+        copy_alive = self._alive("copy")
+        for key, var in (("monitor", self.var_status), ("copy", self.var_copy),
+                         ("autojoin", self.var_join)):
+            alive = self._alive(key)
+            if alive:
+                var.set("● 运行中")
+                style = "Ok.TLabel"
+            elif key == "monitor" and copy_alive:
+                var.set("● 随复制运行")
+                style = "Ok.TLabel"
+            else:
+                var.set("○ 未运行")
+                style = "Muted.TLabel"
+            label = self.status_labels.get(key)
+            if label is not None:
+                label.configure(style=style)
 
     # ------------------------------------------------------------- push
     def test_telegram(self) -> None:
@@ -1281,10 +1329,9 @@ class App:
         dlg.transient(self.root)
         dlg.grab_set()
 
-        ttk.Label(dlg, text="按下面步骤复制 cURL", font=("Microsoft YaHei UI", 11, "bold")).pack(
+        ttk.Label(dlg, text="按下面步骤复制 cURL", style="Subtitle.TLabel").pack(
             anchor="w", padx=16, pady=(16, 6))
-        ttk.Label(dlg, text=self.SESSION_STEPS, justify="left",
-                  foreground="#444").pack(anchor="w", padx=16)
+        ttk.Label(dlg, text=self.SESSION_STEPS, justify="left").pack(anchor="w", padx=16)
 
         btns = ttk.Frame(dlg)
         btns.pack(fill="x", padx=16, pady=(10, 4))
@@ -1422,7 +1469,7 @@ class App:
         try:
             if STATE_PATH.exists():
                 self._pending_selection = json.loads(
-                    STATE_PATH.read_text(encoding="utf-8")).get("selected", [])
+                    STATE_PATH.read_text(encoding="utf-8-sig")).get("selected", [])
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -1435,11 +1482,24 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    @staticmethod
+    def _load_theme() -> str:
+        try:
+            if STATE_PATH.exists():
+                mode = str(json.loads(
+                    STATE_PATH.read_text(encoding="utf-8-sig")).get("theme") or "")
+                if mode in theme.MODES:
+                    return mode
+        except Exception:  # noqa: BLE001
+            pass
+        return "dark"
+
     def _save_state(self) -> None:
         try:
             STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
             STATE_PATH.write_text(json.dumps(
-                {"selected": self._selected_ids()}, ensure_ascii=False, indent=1),
+                {"selected": self._selected_ids(), "theme": self.theme_mode},
+                ensure_ascii=False, indent=1),
                 encoding="utf-8")
         except Exception:  # noqa: BLE001
             pass

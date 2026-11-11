@@ -1,4 +1,4 @@
-# 币安跟单工具 v1.0.0
+# 币安跟单工具 v1.1.0
 
 把币安「跟单交易」的成交事件实时接到本地，按你自己的比例在**执行账户**里复制：
 **监控 / 复制 / 推送 / 自动跟单**，带一个桌面控制台。
@@ -29,7 +29,7 @@
 ## 快速开始
 
 ```bat
-python -m pip install websockets
+python -m pip install -r requirements.txt
 copy .env.example .env
 python gui\启动.bat
 ```
@@ -82,6 +82,7 @@ bot/
   version.py        版本号
 gui/
   app.py            桌面控制台（四页）
+  theme.py          深浅色主题、字体与统一配色
 docs/
   配置与使用说明.md
   仓位复制页设计.md
