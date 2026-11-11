@@ -17,6 +17,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import queue
+import threading
 import os
 import sys
 import time
@@ -258,6 +260,29 @@ def tg_send(text: str) -> bool:
     return False
 
 
+_tg_q: "queue.Queue[str]" = queue.Queue(maxsize=200)
+
+
+def _tg_worker() -> None:
+    while True:
+        text = _tg_q.get()
+        try:
+            tg_send(text)
+        except Exception as e:  # noqa: BLE001
+            log(f"telegram worker error: {e}")
+
+
+def tg_send_async(text: str) -> None:
+    """旁路推送：入队即返回，网络慢或失败都不影响成交处理。"""
+    try:
+        _tg_q.put_nowait(text)
+    except queue.Full:
+        log("telegram 队列已满，丢弃一条推送")
+
+
+threading.Thread(target=_tg_worker, daemon=True).start()
+
+
 def fmt_fill(o: dict, nickname: str) -> str:
     rp = float(o.get("rp") or 0)
     qty = float(o.get("l") or 0)
@@ -371,8 +396,8 @@ def handle(msg: dict, pid: str, nickname: str, lead: str | None) -> None:
         except Exception as e:  # noqa: BLE001
             log(f"signal hook error: {e}")
 
-    if tg_send(text):
-        stats["pushed"] += 1
+    tg_send_async(text)
+    stats["pushed"] += 1
 
 
 async def keepalive_loop(pid: str, stop: asyncio.Event) -> None:

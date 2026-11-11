@@ -149,7 +149,7 @@ def main() -> None:
     log(f"自动跟单启动 · {'实盘下单' if live else '只提示（dry-run）'} · "
         f"监控 {len(targets)} 人 · 间隔 {interval:.0f}s")
     names = "、".join(t.get("nickname") or k for k, t in targets.items())
-    L.tg_send(f"🟢 自动跟单已启动（{'实盘' if live else '只提示'}）\n"
+    L.tg_send_async(f"🟢 自动跟单已启动（{'实盘' if live else '只提示'}）\n"
               f"监控 {len(targets)} 人：{names}\n"
               f"每 {interval:.0f} 秒检查一次名额，出现空位会立刻通知。")
 
@@ -178,7 +178,7 @@ def main() -> None:
 
             if lead_id not in announced:
                 log(f"发现名额！{nickname} {cur}/{mx}")
-                L.tg_send(f"🔔 名额出现：{nickname}\n{cur}/{mx}\n"
+                L.tg_send_async(f"🔔 名额出现：{nickname}\n{cur}/{mx}\n"
                           f"https://www.binance.com/zh-CN/copy-trading/copy-setting?portfolioId={lead_id}")
                 announced.add(lead_id)
 
@@ -194,11 +194,11 @@ def main() -> None:
             ok, msg = join(api, lead_id, params)
             if ok:
                 log(f"✅ 已加入 {nickname}，投入 {params['investAmount']} U")
-                L.tg_send(f"✅ 自动跟单成功\n{nickname}\n投入 {params['investAmount']} U")
+                L.tg_send_async(f"✅ 自动跟单成功\n{nickname}\n投入 {params['investAmount']} U")
                 joined.add(lead_id)
             else:
                 log(f"❌ 加入失败 {nickname}: {msg}")
-                L.tg_send(f"❌ 自动跟单失败\n{nickname}\n{msg}\n请手动处理")
+                L.tg_send_async(f"❌ 自动跟单失败\n{nickname}\n{msg}\n请手动处理")
 
         if len(joined) >= len(targets):
             log("监控名单已全部处理完，退出")

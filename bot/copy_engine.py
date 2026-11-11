@@ -112,6 +112,8 @@ class CopyEngine:
         self._lead_lev: dict[tuple[str, str], tuple[float, float]] = {}
         self._lev_plan: dict[str, int] = {}
         self._lev_logged: dict[str, int] = {}
+        self._notify_q: queue.Queue = queue.Queue(maxsize=100)
+        threading.Thread(target=self._notify_worker, daemon=True).start()
         self._mirror_pos: dict[tuple[str, str], float] = {}
         self._pending_reduce: dict[tuple[str, str], float] = {}
         self._pending: dict[tuple, dict] = {}
@@ -215,7 +217,7 @@ class CopyEngine:
         """
         now = time.time()
         hit = self._equity_cache.get(portfolio)
-        if hit and now - hit[0] < 60:
+        if hit and now - hit[0] < 600:
             return hit[1]
         eq = 0.0
         try:
@@ -238,19 +240,30 @@ class CopyEngine:
         return self.cfg.get("slippage_default_pct", 1.5) * 100
 
     def _notify(self, text: str) -> None:
-        """后台线程发送，避免 Telegram 的网络延迟拖慢订单处理。"""
+        """旁路通知：入有界队列即返回，绝不阻塞订单。
+
+        队列满了就丢最旧的——推送丢了没关系，单必须照下。
+        """
         if not self.cfg.get("push_orders", True):
             return
-        threading.Thread(target=self._send_tg, args=(text,), daemon=True).start()
-
-    @staticmethod
-    def _send_tg(text: str) -> None:
         try:
-            from listen_copy import tg_send
-            if not tg_send(text):
-                log("telegram 未配置或发送失败")
-        except Exception as e:  # noqa: BLE001
-            log(f"telegram error: {e}")
+            self._notify_q.put_nowait(text)
+        except queue.Full:
+            try:
+                self._notify_q.get_nowait()
+                self._notify_q.put_nowait(text)
+            except Exception:  # noqa: BLE001
+                log("telegram 队列已满，丢弃一条通知")
+
+    def _notify_worker(self) -> None:
+        while True:
+            text = self._notify_q.get()
+            try:
+                from listen_copy import tg_send
+                if not tg_send(text):
+                    log("telegram 未配置或发送失败")
+            except Exception as e:  # noqa: BLE001
+                log(f"telegram error: {e}")
 
     def _exec(self):
         if getattr(self, "_ex", None) is None:
@@ -275,7 +288,7 @@ class CopyEngine:
         key = (portfolio, symbol)
         now = time.time()
         hit = self._lead_lev.get(key)
-        if hit and now - hit[0] < 60:
+        if hit and now - hit[0] < 600:
             return hit[1]
         lev = 0.0
         try:
