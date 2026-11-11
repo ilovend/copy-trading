@@ -41,7 +41,7 @@ DEFAULTS = {
     "max_slippage_pct": 0.5,          # 兼容旧字段
     "slippage_btc_eth_pct": 0.5,      # 官方默认
     "slippage_default_pct": 1.5,      # 官方对非主流币默认
-    "max_signal_age_s": 3.0,
+    "max_signal_age_s": 8.0,
     "min_notional_bump": True,     # 比例算出来不够最小名义时，按最小名义下单
     "min_notional_usdt": 5.0,
     "agg_window_ms": 1500,
@@ -293,11 +293,12 @@ class CopyEngine:
         影子模式读本地台账；实盘要改成查 /fapi/v2/positionRisk，
         在那之前宁可报错也不要拿假数据下单。
         """
-        if self.cfg.get("mode") in ("live", "live_dry"):
+        if self.cfg.get("mode") == "live":
             try:
                 return self._exec().position(symbol, ps)
             except Exception as e:  # noqa: BLE001
                 raise RuntimeError(f"查询持仓失败: {e}") from None
+        # 影子 / 干跑：没有真实仓位，用本地模拟台账
         return self._pos.get((symbol, ps or "BOTH"), 0.0)
 
     @staticmethod
@@ -359,6 +360,15 @@ class CopyEngine:
 
     # ------------------------------------------------------------- process
     def _process(self, sig: dict) -> None:
+        _t0 = time.time()
+        try:
+            self._process_inner(sig)
+        finally:
+            cost = (time.time() - _t0) * 1000
+            if cost > 800:
+                log(f"SLOW 处理耗时 {cost:.0f}ms {sig.get('symbol')}")
+
+    def _process_inner(self, sig: dict) -> None:
         self._reset_daily()
         self.cfg = load_config()
         self._stats["signals"] += 1
