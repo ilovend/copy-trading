@@ -539,6 +539,14 @@ class CopyEngine:
             qty_target = self._ceil_step(qty_target, flt["step"])
         else:
             qty_target = self._floor_step(qty_target, flt["step"])
+            # 取整后可能掉到最小名义以下，补回来
+            mn_open = max(flt["min_notional"], self.cfg.get("min_notional_usdt", 5.0))
+            if qty_target * price < mn_open and self.cfg.get("min_notional_bump", True):
+                qty_target = min(
+                    self._ceil_step(mn_open / price, flt["step"]),
+                    self._floor_step(self.cfg["max_order_notional"] / price, flt["step"]),
+                )
+                bumped = True
         notional = qty_target * price
         full_close = kind == "close" and frac >= 0.999
         if qty_target <= 0 or (notional < flt["min_notional"] and not full_close):
