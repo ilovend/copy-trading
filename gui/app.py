@@ -130,7 +130,7 @@ class App:
         self.var_tg = tk.StringVar()
         self.var_proxy = tk.StringVar()
         self.var_session = tk.StringVar()
-        for label, var in (("监控", self.var_status), ("影子复制", self.var_shadow),
+        for label, var in (("监控", self.var_status), ("复制", self.var_shadow),
                            ("自动跟单", self.var_join), ("推送", self.var_tg),
                            ("代理", self.var_proxy), ("登录态", self.var_session)):
             row = ttk.Frame(box)
@@ -165,11 +165,11 @@ class App:
         cfg = self._load_copy_cfg()
         self.copy_vars: dict[str, tk.StringVar] = {}
 
-        ttk.Label(parent, text="仓位复制（影子模式）",
+        ttk.Label(parent, text="仓位复制",
                   font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
         ttk.Label(parent, foreground="#777", justify="left", wraplength=760, text=(
-            "当前是影子模式：完整计算「本应下的单」并测量滑点，但不会真的下单。"
-            "改完参数点「保存配置」，再点「启动影子复制」。"
+            "先在「运行模式」里选影子 / 干跑 / 实盘，改完参数点「保存配置」，"
+            "再回「仓位监控」页点「启动」。"
         )).pack(anchor="w", pady=(2, 10))
 
         mode_box = ttk.LabelFrame(parent, text="运行模式", padding=10)
@@ -196,7 +196,7 @@ class App:
         acct.pack(fill="x")
         self._cfg_entry(acct, 0, "API Key", "exec_api_key", cfg, "接入实盘时填（当前不用）", show="*")
         self._cfg_entry(acct, 1, "API Secret", "exec_api_secret", cfg, "接入实盘时填（当前不用）", show="*")
-        self._cfg_entry(acct, 2, "执行账户权益 (U)", "exec_equity", cfg, "影子模式下手填，比如 50")
+        self._cfg_entry(acct, 2, "执行账户权益 (U)", "exec_equity", cfg, "手填当前权益，比如 50")
         self._cfg_entry(acct, 3, "杠杆", "leverage", cfg, "固定保证金模式用它算名义")
         self._cfg_entry(acct, 4, "单笔上限 (U)", "max_order_notional", cfg, "单笔名义不超过这个")
         self._cfg_entry(acct, 5, "总敞口上限 (U)", "max_total_notional", cfg, "所有持仓名义合计")
@@ -241,7 +241,7 @@ class App:
                   foreground="#666", justify="left").pack(anchor="w", pady=(10, 0))
 
         ttk.Label(parent, foreground="#999", justify="left", wraplength=760, text=(
-            "影子模式会把每笔意图写进 bot/data/intents-YYYYMMDD.jsonl，"
+            "三种模式都会把每笔意图写进 bot/data/intents-YYYYMMDD.jsonl，"
             "内容包括目标数量、盘口估算成交价、滑点 bps。跑一天再用「查看今日日报」评估。"
         )).pack(anchor="w", pady=(10, 0))
 
@@ -363,7 +363,7 @@ class App:
         if total == 0:
             self.var_hint.set("未勾选监控")
         elif copied:
-            self.var_hint.set(f"将启动：监控 + 影子复制（复制 {copied}/{total}）")
+            self.var_hint.set(f"将启动：监控 + 复制（复制 {copied}/{total}）")
         else:
             self.var_hint.set(f"将启动：仅监控（{total} 个）")
 
@@ -438,7 +438,7 @@ class App:
             p = subprocess.run([PY, str(ROOT / "bot" / "shadow_report.py")],
                                cwd=str(ROOT), capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=30)
-            self.q.put(("log", "── 影子日报 ──"))
+            self.q.put(("log", "── 复制日报 ──"))
             for line in (p.stdout or "").splitlines():
                 self.q.put(("log", line))
 
