@@ -372,6 +372,7 @@ class App:
         if not ids:
             messagebox.showinfo("提示", "先点列表里的「监控」列，勾选要盯的带单员")
             return
+        self.save_copy_cfg()
         copied = [i for i in ids if i in self.copied]
         self._save_copy_targets(copied)
         if copied:

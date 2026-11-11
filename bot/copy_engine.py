@@ -535,7 +535,8 @@ class CopyEngine:
         with (DATA / f"intents-{datetime.now():%Y%m%d}.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-        log(f"SHADOW {kind.upper():5s} {symbol:10s} {side:4s} "
+        label = {"shadow": "SHADOW", "live_dry": "DRY  ", "live": "LIVE "}.get(mode_cfg, "SHADOW")
+        log(f"{label} {kind.upper():5s} {symbol:10s} {side:4s} "
             f"mirror={qty_mirror:<10g} target={qty_target:<10g} "
             f"px={price:<10g} est={exec_price:<10g} slip={slip_bps:+.1f}bps "
             f"notional={notional:.2f}U hold={after_pos:g}"

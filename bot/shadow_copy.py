@@ -33,9 +33,11 @@ def main() -> None:
     engine = CopyEngine()
     L.set_signal_hook(engine.on_signal)
     cfg = engine.cfg
-    print(f"[shadow] mode={cfg['ratio_mode']} k={cfg['k']} exec_equity={cfg['exec_equity']}U "
-          f"max_order={cfg['max_order_notional']}U slippage_cap={cfg['max_slippage_pct']}%",
-          flush=True)
+    exec_mode = cfg.get("mode", "shadow")
+    print(f"[copy] 执行模式={exec_mode}  比例={cfg['ratio_mode']} k={cfg['k']} "
+          f"权益={cfg['exec_equity']}U 单笔≤{cfg['max_order_notional']}U "
+          f"滑点 BTC/ETH={cfg.get('slippage_btc_eth_pct', 0.5)}% "
+          f"其他={cfg.get('slippage_default_pct', 1.5)}%", flush=True)
 
     tokens = L.parse_tokens(args.only)
     try:
