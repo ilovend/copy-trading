@@ -395,6 +395,14 @@ class App:
         })
         cfg.pop("exec_api_key", None)
         cfg.pop("exec_api_secret", None)
+        # 参数组合自检：单笔上限不能贴着最小名义
+        cap = float(cfg.get("max_order_notional") or 0)
+        if cap and cap < 5.5:
+            messagebox.showwarning(
+                "单笔上限偏小",
+                f"当前单笔上限 {cap:.1f}U，和最小名义 5U 太接近。\n\n"
+                "很多币种按数量取整后会掉到 5U 以下，导致无法下单。\n"
+                "建议改成 6U 或更高（或降低最小名义策略的使用频率）。")
         path = ROOT / "gui" / "copy_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         self._append(f"复制配置已保存：{cfg['ratio_mode']} k={cfg['k']} "

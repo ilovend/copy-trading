@@ -554,8 +554,14 @@ class CopyEngine:
         notional = qty_target * price
         full_close = kind == "close" and frac >= 0.999
         if qty_target <= 0 or (notional < flt["min_notional"] and not full_close):
+            cap = float(self.cfg.get("max_order_notional") or 0)
+            hint = ""
+            if kind == "open" and cap and cap <= flt["min_notional"] * 1.1:
+                hint = (f"；单笔上限 {cap:.1f}U 与最小名义 {flt['min_notional']:.1f}U 太接近，"
+                        f"建议把单笔上限调到 ≥{flt['min_notional'] * 1.2:.1f}U")
             self._reject(sig, "too_small",
-                         f"目标 {qty_target} 名义 {notional:.2f} < minNotional {flt['min_notional']}")
+                         f"目标 {qty_target} 名义 {notional:.2f} < minNotional "
+                         f"{flt['min_notional']}{hint}")
             return
 
         book_side = "BUY" if side == "BUY" else "SELL"
