@@ -25,8 +25,27 @@ DATA.mkdir(parents=True, exist_ok=True)
 INTERVAL_S = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
 
 
+_LOG_FILE = None
+
+
+def set_log_file(path) -> None:
+    """把日志同时写到文件（无人值守排障用）。"""
+    global _LOG_FILE
+    try:
+        _LOG_FILE = open(path, "a", encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        _LOG_FILE = None
+
+
 def log(msg: str) -> None:
-    print(f"{datetime.now():%H:%M:%S} {msg}", flush=True)
+    line = f"{datetime.now():%H:%M:%S} {msg}"
+    print(line, flush=True)
+    if _LOG_FILE is not None:
+        try:
+            _LOG_FILE.write(line + "\n")
+            _LOG_FILE.flush()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def ladder_of(trade: dict) -> list[tuple[float, float]]:

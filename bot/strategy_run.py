@@ -33,7 +33,9 @@ import strategy_volume_pinbar as SP  # noqa: E402
 import strategy_fade as SF  # noqa: E402
 from strategy_config import load as load_cfg  # noqa: E402
 from strategy_engine import (INTERVAL_S, StrategyEngine, ladder_of, log,  # noqa: E402
-                             simulate_exit)
+                             set_log_file, simulate_exit)
+
+STATUS_PATH = ROOT / "bot" / "data" / "strategy-status.json"
 
 FAPI = "https://fapi.binance.com"
 WS = "wss://fstream.binance.com/stream"
@@ -95,7 +97,10 @@ class Runner:
         self._reconnect = threading.Event()
         self._last_summary = 0.0
         self._last_beat = time.time()
+        self._last_msg = time.time()
         self._cutoff_logged = False
+        self._last_status = 0.0
+        self._rest_enabled = False
         self.setup_cfg = cfg.get("setup") or {}
         self.fade_cfg = cfg.get("fade") or {}
         self.stages: dict[str, SP.TwoStage] = {}
@@ -107,6 +112,11 @@ class Runner:
                 continue
             try:
                 bars = fetch_bars(sym, self.interval)
+                # 丢掉未收盘的当前根，避免它收盘时因时间戳相同被跳过
+                if bars:
+                    step_ms = INTERVAL_S.get(self.interval, 60) * 1000
+                    if int(bars[-1]["t"]) + step_ms > time.time() * 1000:
+                        bars = bars[:-1]
                 self.bars[sym] = deque(bars, maxlen=BARS_KEEP)
             except Exception as e:  # noqa: BLE001
                 log(f"预取 {sym} 失败: {e}")
@@ -193,6 +203,15 @@ class Runner:
                                 f"{self.engine.summary()}")
                     except Exception:  # noqa: BLE001
                         pass
+                if now - self._last_status >= 30:
+                    self._last_status = now
+                    self._write_status(now)
+                    if now - getattr(self, "_last_status_log", 0) >= 600:
+                        self._last_status_log = now
+                        log(f"状态   候选 {len(self.universe)} · bars {len(self.bars)} · "
+                            f"WS {now - self._last_msg:.0f}s 前 · 队列 {self.signals.qsize()} · "
+                            f"信号 {self.engine.stats['signals']} · "
+                            f"拒绝 {self.engine.stats['rejects']}")
                 if now - self._last_summary >= 300:
                     self._last_summary = now
                     if self.engine.stats["signals"] or self.engine.positions:
@@ -201,8 +220,94 @@ class Runner:
                 log(f"持仓管理异常: {e}")
             time.sleep(1.0)
 
+    def _write_status(self, now: float) -> None:
+        latest = 0
+        for b in self.bars.values():
+            if b:
+                latest = max(latest, int(b[-1]["t"]))
+        payload = {
+            "ts": int(now), "time": datetime.now().strftime("%H:%M:%S"),
+            "mode": self.engine.mode, "universe": len(self.universe),
+            "bars": len(self.bars), "positions": len(self.engine.positions),
+            "queue": self.signals.qsize(),
+            "ws_age_s": round(now - self._last_msg, 1),
+            "bar_age_s": round(now - latest / 1000, 1) if latest else None,
+            "stats": dict(self.engine.stats),
+            "realized_today": round(self.engine.realized_today, 3),
+        }
+        try:
+            tmp = STATUS_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(STATUS_PATH)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ------------------------------------------------------------- REST 兜底
+    async def _rest_loop(self) -> None:
+        """WS 收不到数据时（代理/网络问题），用 REST 轮询补 K 线与价格。"""
+        from copy_engine import http_json
+        step = INTERVAL_S.get(self.interval, 60) * 1000
+        while not self._stop.is_set():
+            try:
+                prices = await asyncio.to_thread(
+                    http_json, f"{FAPI}/fapi/v1/ticker/price", 10)
+                if isinstance(prices, list):
+                    for row in prices:
+                        try:
+                            self.prices[row["symbol"]] = float(row["price"])
+                        except Exception:  # noqa: BLE001
+                            continue
+            except Exception as e:  # noqa: BLE001
+                log(f"REST 价格轮询失败: {e}")
+            for sym in list(self.universe):
+                if self._stop.is_set():
+                    return
+                try:
+                    rows = await asyncio.to_thread(
+                        http_json,
+                        f"{FAPI}/fapi/v1/klines?symbol={sym}"
+                        f"&interval={self.interval}&limit=3", 10)
+                except Exception:  # noqa: BLE001
+                    continue
+                if not isinstance(rows, list) or not rows:
+                    continue
+                try:
+                    self.prices[sym] = float(rows[-1][4])
+                except Exception:  # noqa: BLE001
+                    pass
+                dq = self.bars.get(sym)
+                if dq is None:
+                    dq = deque(maxlen=BARS_KEEP)
+                    self.bars[sym] = dq
+                last_t = int(dq[-1]["t"]) if dq else 0
+                now_ms = time.time() * 1000
+                for k in rows:
+                    t = int(k[0])
+                    if t + step > now_ms:
+                        continue
+                    bar = {"t": t, "o": float(k[1]), "h": float(k[2]),
+                           "l": float(k[3]), "c": float(k[4]), "v": float(k[5]),
+                           "closed": True}
+                    if t == last_t and dq:
+                        dq[-1] = bar          # 同一根从未收盘变收盘：就地更新
+                        try:
+                            self.signals.put_nowait((sym, bar))
+                        except queue.Full:
+                            pass
+                        continue
+                    if t <= last_t:
+                        continue
+                    dq.append(bar)
+                    last_t = t
+                    try:
+                        self.signals.put_nowait((sym, bar))
+                    except queue.Full:
+                        pass
+            await asyncio.sleep(float(self.cfg.get("rest_poll_s", 5) or 5))
+
     # ------------------------------------------------------------- WS
     def _handle(self, msg: dict) -> None:
+        self._last_msg = time.time()
         data = msg.get("data", msg)
         if isinstance(data, list):
             for row in data:
@@ -222,7 +327,11 @@ class Runner:
         bar = {"t": int(k["t"]), "o": float(k["o"]), "h": float(k["h"]),
                "l": float(k["l"]), "c": float(k["c"]), "v": float(k["v"]),
                "closed": True}
-        self.bars[symbol].append(bar)
+        dq = self.bars[symbol]
+        if dq and int(dq[-1]["t"]) == bar["t"]:
+            dq[-1] = bar
+        else:
+            dq.append(bar)
         try:
             self.signals.put_nowait((symbol, bar))
         except queue.Full:
@@ -230,10 +339,16 @@ class Runner:
 
     async def _stream_loop(self) -> None:
         backoff = 1
+        silent_failures = 0
         while not self._stop.is_set():
             if not self.universe:
                 await asyncio.sleep(1)
                 continue
+            if self._rest_enabled and silent_failures >= 3:
+                log("WS 连续静默 3 次，判定当前网络不可用，改由 REST 轮询供数")
+                while not self._stop.is_set():
+                    await asyncio.sleep(30)
+                return
             streams = [f"{s.lower()}@kline_{self.interval}" for s in self.universe]
             streams.append("!markPrice@arr@1s")
             url = f"{WS}?streams={'/'.join(streams)}"
@@ -248,6 +363,11 @@ class Runner:
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=2)
                         except asyncio.TimeoutError:
+                            if time.time() - self._last_msg > 90:
+                                silent_failures += 1
+                                log(f"WS 静默 {time.time() - self._last_msg:.0f}s"
+                                    f"（第 {silent_failures} 次），重连")
+                                break
                             continue
                         try:
                             self._handle(json.loads(raw))
@@ -308,11 +428,23 @@ class Runner:
         threading.Thread(target=self._signal_loop, daemon=True).start()
         threading.Thread(target=self._manage_loop, daemon=True).start()
         uni_task = asyncio.create_task(self._universe_loop())
+        rest_task = None
+        feed = str(self.cfg.get("feed", "auto") or "auto").lower()
+        self._rest_enabled = feed in ("rest", "auto")
+        if feed in ("rest", "auto"):
+            rest_task = asyncio.create_task(self._rest_loop())
+            log(f"REST 兜底已开启：每 {self.cfg.get('rest_poll_s', 5)}s 轮询 "
+                f"{len(self.universe)} 个候选")
         try:
-            await self._stream_loop()
+            if feed == "rest":
+                await rest_task
+            else:
+                await self._stream_loop()
         finally:
             self._stop.set()
             uni_task.cancel()
+            if rest_task:
+                rest_task.cancel()
             if self.engine.positions:
                 log("停止中，平掉策略持仓")
                 await asyncio.to_thread(self.engine.close_all,
@@ -471,6 +603,8 @@ def main() -> None:
         return
 
     runner = Runner(cfg)
+    set_log_file(ROOT / "bot" / "data" /
+                 f"strategy-run-{datetime.now():%Y%m%d}.log")
     try:
         asyncio.run(runner.run())
     except KeyboardInterrupt:
