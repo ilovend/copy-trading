@@ -65,7 +65,7 @@ def simulate_exit(bars: list[dict], start: int, trade: dict,
         held = j - start
         hi, lo, cl = float(bars[j]["h"]), float(bars[j]["l"]), float(bars[j]["c"])
         if (hi / entry - 1) * 100 >= sl:
-            realized += sl * remaining
+            realized -= sl * remaining          # 做空被止损：负收益
             return realized, "stop_loss", held
         pnl_best = (entry - lo) / entry * 100
         pnl_close = (entry - cl) / entry * 100
