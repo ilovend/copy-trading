@@ -1,5 +1,31 @@
 # 更新日志
 
+## v1.10.0（2026-11-13）
+
+开仓同时挂**交易所侧**止盈止损条件单，进程挂了也不裸奔。
+
+### 新增
+
+- `ExecClient.stop_close()` / `cancel_algo()`：走币安新 Algo 接口
+  `POST /fapi/v1/algoOrder`（`algoType=CONDITIONAL`、`triggerPrice`、
+  `closePosition=true`、`workingType=MARK_PRICE`）
+- 引擎 `_place_protect()`：开仓/加仓后立刻挂
+  · `STOP_MARKET` 于 均价×(1−硬止损%)
+  · `TAKE_PROFIT_MARKET` 于 均价×(1−止盈%)
+  平仓时撤单；加仓改均价后**先撤再按新均价重挂**；重启接管持仓时也会重挂
+- `basket.protect`（默认 true）控制是否挂交易所条件单
+
+### 实测
+
+真实开 0.05 张 CBRS 空单，挂出 `algoId ...8907`（STOP 120.26）与
+`...8917`（TP 112.32），撤单后 `openAlgoOrders` 为 0、账户已平仓，
+测试成本约 −0.01U。
+
+> 注：币安已停止在 `/fapi/v1/order` 支持 `STOP_MARKET`/`TAKE_PROFIT_MARKET`
+> （返回 -4120），必须走 `/fapi/v1/algoOrder`。
+
+---
+
 ## v1.9.8（2026-11-13）
 
 修「同一根 K 线反复触发」与「周期不对导致涨幅算错」。
@@ -429,6 +455,7 @@ GUI 补齐「复刻 + 均价加仓」参数，不再靠命令行。
 
 | 版本 | 内容 |
 |---|---|
+| v1.10.0 | 开仓即挂交易所侧止盈止损条件单（algoOrder） |
 | v1.9.8 | 信号去重、按时间回看、对账二次确认 |
 | v1.9.7 | 重启接管持仓、外部平仓对账、加仓最小名义 |
 | v1.9.6 | 修行情断流：REST 兜底 + 收盘 K 线跳过 |

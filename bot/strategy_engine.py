@@ -130,6 +130,7 @@ class StrategyEngine:
         self._lev_set: set[str] = set()
         self.basket = cfg.get("basket") or {}
         self.basket_on = bool(self.basket.get("enabled"))
+        self.protect_on = bool(self.basket.get("protect", True))
 
         self.positions: dict[str, dict] = {}
         self._cooldown: dict[str, float] = {}
@@ -463,6 +464,8 @@ class StrategyEngine:
                         f"上影 {(detail.get('upper_ratio') or 0) * 100:.0f}%")
             self._notify(head)
         self._save_state()
+        if self.basket_on:
+            self._place_protect(symbol, pos)
         return True
 
     def _ensure_leverage(self, symbol: str) -> None:
@@ -707,7 +710,55 @@ class StrategyEngine:
             f"（{len(pos['entries'])} 笔）")
         self._notify(f"➕ 均价加空 {symbol}\n{qty:g} @ {entry:g}\n"
                      f"共 {pos['qty']:g} 均价 {pos['avg']:g}")
+        self._cancel_protect(symbol, pos)
+        self._place_protect(symbol, pos)
         self._save_state()
+
+    # ------------------------------------------------------- 交易所侧条件单
+    def _cancel_protect(self, symbol: str, pos: dict) -> None:
+        ids = pos.pop("protect", None) or []
+        if not ids or self.mode != "live":
+            return
+        ex = self._ex_client()
+        for oid in ids:
+            try:
+                ex.cancel_algo(symbol, oid)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _place_protect(self, symbol: str, pos: dict) -> None:
+        """开仓/加仓后，在交易所挂「全平」止盈止损条件单，进程挂了也有保护。"""
+        if self.mode != "live" or not self.basket_on or not self.protect_on:
+            return
+        b = self.basket
+        tp = float(b.get("basket_tp_pct", 0) or 0)
+        hard = float(b.get("hard_stop_pct", 0) or 0)
+        if tp <= 0 or hard <= 0:
+            return
+        avg = float(pos["avg"])
+        tick = self._flt(symbol)["tick"]
+        sl_px = self._tick_round(avg * (1 + hard / 100), tick)
+        tp_px = self._tick_round(avg * (1 - tp / 100), tick)
+        ps = "SHORT" if self._is_hedge() else None
+        ex = self._ex_client()
+        ids = []
+        try:
+            r = ex.stop_close(symbol, "BUY", sl_px, kind="STOP_MARKET",
+                              position_side=ps)
+            ids.append(r.get("algoId") or r.get("orderId"))
+        except Exception as e:  # noqa: BLE001
+            log(f"⚠ 止损条件单失败 {symbol}: {e}")
+        try:
+            r = ex.stop_close(symbol, "BUY", tp_px, kind="TAKE_PROFIT_MARKET",
+                              position_side=ps)
+            ids.append(r.get("algoId") or r.get("orderId"))
+        except Exception as e:  # noqa: BLE001
+            log(f"⚠ 止盈条件单失败 {symbol}: {e}")
+        pos["protect"] = [i for i in ids if i]
+        if pos["protect"]:
+            log(f"PROTECT {symbol:12s} 止损 {sl_px:g} / 止盈 {tp_px:g}（交易所条件单）")
+            self._notify(f"🛡 {symbol} 已挂交易所条件单\n"
+                         f"止损 {sl_px:g}（-{hard:g}%）/ 止盈 {tp_px:g}（+{tp:g}%）")
 
     # ------------------------------------------------------- 持仓持久化 / 对账
     def _save_state(self) -> None:
@@ -756,6 +807,7 @@ class StrategyEngine:
                 "detail": {}, "last_add_pnl": 0.0,
             }
             held = (time.time() - self.positions[sym]["opened_at"]) / 60
+            self._place_protect(sym, self.positions[sym])
             log(f"⚠ 接管未平持仓 {sym} {qty:g} @ {entry:g}（已持有 {held:.0f} 分钟）")
             self._notify(f"⚠️ 重启接管持仓\n{sym} 空 {qty:g} @ {entry:g}\n"
                          f"已持有 {held:.0f} 分钟，继续执行止盈/止损/超时")
@@ -784,6 +836,7 @@ class StrategyEngine:
             if pos["_miss"] < 2:      # 刚成交时仓位接口可能延迟，再查一次
                 log(f"⚠ {sym} 暂时查不到持仓（{pos['_miss']}/2），10 秒后复查")
                 continue
+            self._cancel_protect(sym, pos)
             self.positions.pop(sym)
             self._record("close", symbol=sym, reason="external", qty=0.0,
                          pnl_total=round(float(pos.get("realized") or 0), 6),
@@ -800,6 +853,7 @@ class StrategyEngine:
             return False
         if pos.get("tp_order"):
             self._cancel_tp(symbol, pos)     # 主动平仓前先撤掉止盈挂单
+        self._cancel_protect(symbol, pos)
         remaining = float(pos["qty"])
         flt = self._flt(symbol)
         qty = remaining if frac >= 0.999 else self._floor_step(remaining * frac, flt["step"])
@@ -856,6 +910,7 @@ class StrategyEngine:
     def _finalize(self, symbol: str, pos: dict, reason: str) -> None:
         held = time.time() - pos["opened_at"]
         total = pos["realized"]
+        self._cancel_protect(symbol, pos)
         self.positions.pop(symbol, None)
         self._save_state()
         self._cooldown[symbol] = time.time()

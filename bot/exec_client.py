@@ -227,6 +227,28 @@ class ExecClient:
         return _request("DELETE", "/fapi/v1/allOpenOrders",
                         {"symbol": symbol}, key=self.key, secret=self.secret)
 
+    def stop_close(self, symbol: str, side: str, stop_price: float, *,
+                   kind: str = "STOP_MARKET", position_side: str | None = None,
+                   working_type: str = "MARK_PRICE") -> dict:
+        """挂条件单全平（交易所侧托管，进程挂了也生效）。
+
+        币安 2025-12 起把条件单迁到 Algo 接口：POST /fapi/v1/algoOrder，
+        algoType=CONDITIONAL + triggerPrice + closePosition=true。
+        """
+        params = {"algoType": "CONDITIONAL", "symbol": symbol, "side": side,
+                  "type": kind, "triggerPrice": stop_price,
+                  "closePosition": "true", "workingType": working_type}
+        if position_side:
+            params["positionSide"] = position_side
+        return _request("POST", "/fapi/v1/algoOrder", params,
+                        key=self.key, secret=self.secret)
+
+    def cancel_algo(self, symbol: str, algo_id) -> dict:
+        """撤条件单。"""
+        return _request("DELETE", "/fapi/v1/algoOrder",
+                        {"symbol": symbol, "algoId": algo_id},
+                        key=self.key, secret=self.secret)
+
     def test_order(self, symbol: str, side: str, qty: float, *,
                    order_type: str = "LIMIT", price: float | None = None,
                    time_in_force: str | None = None,
