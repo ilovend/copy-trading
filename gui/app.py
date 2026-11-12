@@ -1116,6 +1116,16 @@ class App:
                   ("预备有效根数", "setup.arm_bars"),
                   ("触发放量倍数", "setup.trig_vol_mult"),
                   ("允许跌离 %", "setup.trig_max_drop_pct"))),
+        ("复刻：暴涨做空 + 均价加仓", (
+                  ("1h 涨幅阈值 %", "fade.entry_pct"),
+                  ("15m 涨幅阈值 %", "fade.entry_15m_pct"),
+                  ("回看分钟", "fade.lookback_min"),
+                  ("每笔名义 (U)", "basket.notional"),
+                  ("加仓步长 %", "basket.add_step_pct"),
+                  ("最多加仓次数", "basket.max_adds"),
+                  ("均价止盈 %", "basket.basket_tp_pct"),
+                  ("硬止损 %", "basket.hard_stop_pct"),
+                  ("最长持仓 (秒)", "basket.max_hold_s"))),
     )
 
     @staticmethod
@@ -1144,6 +1154,8 @@ class App:
         self.var_sg_htf.set(bool((cfg.get("signal") or {}).get("htf_enabled", True)))
         self.var_sg_setup.set(bool((cfg.get("setup") or {}).get("enabled", False)))
         self.var_sg_trig_bear.set(bool((cfg.get("setup") or {}).get("trig_bearish", True)))
+        self.var_sg_fade.set(bool((cfg.get("fade") or {}).get("enabled", False)))
+        self.var_sg_basket.set(bool((cfg.get("basket") or {}).get("enabled", False)))
         for key, var in self.sg_vars.items():
             var.set(self._sg_fmt(self._sg_get(cfg, key)))
 
@@ -1237,6 +1249,12 @@ class App:
         self.var_sg_trig_bear = tk.BooleanVar()
         ttk.Checkbutton(parent, text="触发根要求收阴（否则纯放量即可触发）",
                         variable=self.var_sg_trig_bear).pack(anchor="w", pady=(4, 0))
+        self.var_sg_fade = tk.BooleanVar()
+        ttk.Checkbutton(parent, text="启用「暴涨做空」信号（复刻档，优先于上面的形态信号）",
+                        variable=self.var_sg_fade).pack(anchor="w", pady=(4, 0))
+        self.var_sg_basket = tk.BooleanVar()
+        ttk.Checkbutton(parent, text="启用均价加仓模式（basket：逆行加仓 + 回均价止盈）",
+                        variable=self.var_sg_basket).pack(anchor="w", pady=(4, 0))
         ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
             "HTF 位置由 1m 聚合得到：要求信号那根的高点落在 HTF 区间的「高位阈值」以上"
             "（1.0 = 正好是区间最高），且收盘价相对 HTF 均线至少偏离「HTF 偏离 ATR」个 ATR。"
@@ -1280,6 +1298,8 @@ class App:
         cfg.setdefault("signal", {})["htf_enabled"] = bool(self.var_sg_htf.get())
         cfg.setdefault("setup", {})["enabled"] = bool(self.var_sg_setup.get())
         cfg.setdefault("setup", {})["trig_bearish"] = bool(self.var_sg_trig_bear.get())
+        cfg.setdefault("fade", {})["enabled"] = bool(self.var_sg_fade.get())
+        cfg.setdefault("basket", {})["enabled"] = bool(self.var_sg_basket.get())
         for key, var in self.sg_vars.items():
             raw = var.get().strip()
             default = self._sg_get(SC.DEFAULTS, key)
@@ -1308,11 +1328,21 @@ class App:
             return
         cfg = SC.load()
         if cfg.get("mode") == "live":
+            trade = cfg.get("trade") or {}
+            basket = cfg.get("basket") or {}
+            if basket.get("enabled"):
+                detail = (f"均价止盈 {basket.get('basket_tp_pct')}% / "
+                          f"硬止损 {basket.get('hard_stop_pct')}%\n"
+                          f"逆行 {basket.get('add_step_pct')}% 加仓，最多 "
+                          f"{basket.get('max_adds')} 次（{basket.get('notional')}U/笔）")
+            else:
+                detail = (f"止盈 {trade.get('tp1_pct')}% / 止损 {trade.get('sl_pct')}%")
             if not messagebox.askokcancel(
                     "确认实盘",
-                    f"策略将以实盘模式运行：单笔 {cfg['trade']['notional']}U，"
-                    f"止盈 {cfg['trade']['tp_pct']}% / 止损 {cfg['trade']['sl_pct']}%。\n\n"
-                    "先确认盘口深度和金额都可接受。继续？"):
+                    f"策略将以实盘模式运行：单笔 {trade.get('notional')}U\n"
+                    f"{detail}\n"
+                    f"同时最多 {trade.get('max_positions')} 个币 · "
+                    f"日亏上限 {trade.get('max_daily_loss')}U\n\n继续？"):
                 return
         self.start_job("strategy", pass_only=False, script="strategy_run.py")
 
