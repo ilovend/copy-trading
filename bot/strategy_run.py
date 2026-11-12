@@ -94,6 +94,8 @@ class Runner:
         self._stop = threading.Event()
         self._reconnect = threading.Event()
         self._last_summary = 0.0
+        self._last_beat = time.time()
+        self._cutoff_logged = False
         self.setup_cfg = cfg.get("setup") or {}
         self.fade_cfg = cfg.get("fade") or {}
         self.stages: dict[str, SP.TwoStage] = {}
@@ -169,10 +171,28 @@ class Runner:
                     if self.engine.positions:
                         log("到收盘时间，强平全部策略仓位")
                         self.engine.close_all(dict(self.prices), "cutoff")
-                    log("策略已收盘退出（不隔夜）")
-                    self._stop.set()
-                    return
+                    if not self._cutoff_logged:
+                        self._cutoff_logged = True
+                        log("已收盘：今晚不再开仓，明天 00:00 后自动恢复")
+                        try:
+                            from listen_copy import tg_send
+                            tg_send("🌙 策略收盘：持仓已平，今晚不再开仓，明天自动恢复")
+                        except Exception:  # noqa: BLE001
+                            pass
+                else:
+                    self._cutoff_logged = False
                 now = time.time()
+                hb = float(self.cfg.get("heartbeat_min", 0) or 0)
+                if hb > 0 and now - self._last_beat >= hb * 60:
+                    self._last_beat = now
+                    try:
+                        from listen_copy import tg_send
+                        tg_send(f"💓 策略存活 {datetime.now():%H:%M}\n"
+                                f"候选 {len(self.universe)} · 持仓 {len(self.engine.positions)} · "
+                                f"今日 {self.engine.realized_today:+.2f}U\n"
+                                f"{self.engine.summary()}")
+                    except Exception:  # noqa: BLE001
+                        pass
                 if now - self._last_summary >= 300:
                     self._last_summary = now
                     if self.engine.stats["signals"] or self.engine.positions:
@@ -264,6 +284,26 @@ class Runner:
             f"最长持仓={trade.get('max_hold_s')}s")
         await asyncio.to_thread(self.engine.load_filters)
         await asyncio.to_thread(self._scan_and_prefill)
+
+        try:
+            from listen_copy import tg_send
+            trade = self.engine.trade
+            pool = len(self.universe)
+            if self.fade_cfg.get("enabled"):
+                sig_txt = (f"暴涨做空 1h≥{self.fade_cfg.get('entry_pct')}% / "
+                           f"15m≥{self.fade_cfg.get('entry_15m_pct')}%")
+            elif self.setup_cfg.get("enabled"):
+                sig_txt = f"两段式 {self.setup_cfg.get('htf_minutes')}m→1m 放量"
+            else:
+                sig_txt = "单根 pinbar"
+            tg_send(f"🚀 自研策略已启动\n"
+                    f"模式 {self.engine.mode} · {self.interval} · 候选 {pool} 个\n"
+                    f"信号 {sig_txt}\n"
+                    f"单笔 {trade.get('notional')}U · 最多加仓 {self.cfg.get('basket', {}).get('max_adds', 0)} 次 · "
+                    f"同时 {trade.get('max_positions')} 个币\n"
+                    f"日亏上限 {trade.get('max_daily_loss')}U · 收盘 {trade.get('cutoff')} 强平")
+        except Exception:  # noqa: BLE001
+            pass
 
         threading.Thread(target=self._signal_loop, daemon=True).start()
         threading.Thread(target=self._manage_loop, daemon=True).start()

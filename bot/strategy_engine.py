@@ -427,9 +427,14 @@ class StrategyEngine:
                 f"追踪 {self.trade.get('trail_activate_pct')}/"
                 f"{self.trade.get('trail_gap_pct')}")
             tr_txt = f"TR {detail['tr_ratio']}x  " if detail.get("tr_ratio") else ""
-            self._notify(f"🔻 策略开空 {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
-                         f"放量 {detail.get('vol_ratio')}x  {tr_txt}"
-                         f"上影 {(detail.get('upper_ratio') or 0) * 100:.0f}%")
+            if detail.get("chg_1h") is not None:
+                head = (f"🔻 策略开空 {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
+                        f"1h {detail['chg_1h']:+.1f}%  15m {detail['chg_15m']:+.1f}%")
+            else:
+                head = (f"🔻 策略开空 {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
+                        f"放量 {detail.get('vol_ratio')}x  {tr_txt}"
+                        f"上影 {(detail.get('upper_ratio') or 0) * 100:.0f}%")
+            self._notify(head)
         return True
 
     def _ensure_leverage(self, symbol: str) -> None:
