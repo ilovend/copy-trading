@@ -38,7 +38,8 @@ from strategy_engine import (INTERVAL_S, StrategyEngine, ladder_of, log,  # noqa
 STATUS_PATH = ROOT / "bot" / "data" / "strategy-status.json"
 
 FAPI = "https://fapi.binance.com"
-WS = "wss://fstream.binance.com/stream"
+# 币安 2026 起把合约行情 WS 迁到 /market/stream；老的 /ws、/stream 仍能握手但不推数据
+WS = "wss://fstream.binance.com/market/stream"
 BARS_KEEP = 1500       # 25 小时 1m，够聚合出 HTF 结构
 
 
