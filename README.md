@@ -1,4 +1,4 @@
-# 币安跟单工具 v1.6.0
+# 币安跟单工具 v1.10.1
 
 把币安「跟单交易」的成交事件实时接到本地，按你自己的比例在**执行账户**里复制：
 **监控 / 复制 / 推送 / 自动跟单**，带一个桌面控制台。
@@ -46,6 +46,7 @@ python gui\启动.bat
 
 > 更新内容见 [CHANGELOG.md](CHANGELOG.md)。
 > 开发者/接手者先读 [docs/HANDOFF.md](docs/HANDOFF.md)。
+> **币安接口变更（WS 入口、条件单等）见 [docs/API-CHANGES.md](docs/API-CHANGES.md)**，升级出问题先对照它。
 
 ---
 
@@ -91,6 +92,7 @@ gui/
 docs/
   配置与使用说明.md
   仓位复制页设计.md
+  API-CHANGES.md    币安接口变更记录与复验方法
 ```
 
 ---
