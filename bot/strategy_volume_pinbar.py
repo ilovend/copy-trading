@@ -34,6 +34,67 @@ def _true_range(bar: dict, prev_close: float) -> float:
     return max(h - l, abs(h - prev_close), abs(l - prev_close))
 
 
+def aggregate_htf(bars_1m: Sequence[dict], minutes: int) -> list[dict]:
+    """把 1m 聚合成 minutes 周期的 K 线，只保留已完成的桶。
+
+    最后一个桶通常是「信号所在的半根」，直接丢掉——宁可少一根也不要用残缺结构。
+    """
+    if minutes <= 1:
+        return list(bars_1m)[:-1]
+    span = minutes * 60_000
+    out: list[dict] = []
+    cur: dict | None = None
+    for b in bars_1m:
+        k = int(b["t"]) // span
+        if cur is None or cur["_k"] != k:
+            if cur is not None:
+                out.append(cur)
+            cur = {"_k": k, "o": float(b["o"]), "h": float(b["h"]),
+                   "l": float(b["l"]), "c": float(b["c"])}
+        else:
+            cur["h"] = max(cur["h"], float(b["h"]))
+            cur["l"] = min(cur["l"], float(b["l"]))
+            cur["c"] = float(b["c"])
+    if cur is not None:
+        out.append(cur)
+    # 最后一个桶里装着信号那根 1m，通常还没走完，丢掉
+    return out[:-1] if out else out
+
+
+def htf_context(bars_1m: Sequence[dict], cfg: dict) -> dict | None:
+    """长周期位置：信号那根 K 线的高点，落在 HTF 区间的什么位置。
+
+    返回 None 表示 HTF 数据还不够（预热），此时不开仓。
+    """
+    minutes = int(cfg.get("htf_minutes", 15) or 15)
+    lookback = int(cfg.get("htf_lookback", 12) or 12)
+    ema_n = int(cfg.get("htf_ema", 12) or 12)
+    htf = aggregate_htf(bars_1m, minutes)
+    need = max(lookback, ema_n) + 2
+    if len(htf) < need:
+        return None
+    recent = htf[-lookback:]
+    hi = max(b["h"] for b in recent)
+    lo = min(b["l"] for b in recent)
+    rng = hi - lo
+    if rng <= 0:
+        return None
+    ema = htf[0]["c"]
+    k = 2.0 / (ema_n + 1)
+    for b in htf[1:]:
+        ema = b["c"] * k + ema * (1 - k)
+    trs = []
+    for j in range(max(1, len(htf) - 15), len(htf)):
+        trs.append(_true_range(htf[j], float(htf[j - 1]["c"])))
+    atr = sum(trs) / len(trs) if trs else 0.0
+    last = bars_1m[-1]
+    pos = (float(last["h"]) - lo) / rng
+    dist = ((float(last["c"]) - ema) / atr) if atr > 0 else 0.0
+    return {"pos": round(pos, 3), "dist_atr": round(dist, 2),
+            "range_high": hi, "range_low": lo, "ema": ema, "atr": atr,
+            "bars": len(htf)}
+
+
 def evaluate(bars: Sequence[dict], cfg: dict) -> dict:
     """逐条判定，返回 {'hit': bool, 'reason': str, ...明细}。
 
@@ -104,6 +165,20 @@ def evaluate(bars: Sequence[dict], cfg: dict) -> dict:
     }
     if not all(checks.values()):
         return {"hit": False, "reason": "rule_miss", "detail": detail}
+
+    # ---- 长周期位置：这根 K 线在 HTF 区间的哪个位置、偏离均值多远
+    if cfg.get("htf_enabled", False):
+        ctx = htf_context(bars, cfg)
+        if ctx is None:
+            detail["why"] = "no_htf"
+            return {"hit": False, "reason": "no_htf", "detail": detail}
+        detail["mtf"] = ctx
+        zone = float(cfg.get("htf_high_zone", 0.75))
+        ext = float(cfg.get("htf_ext_atr", 0.8))
+        if ctx["pos"] < zone:
+            return {"hit": False, "reason": "htf_position", "detail": detail}
+        if ctx["dist_atr"] < ext:
+            return {"hit": False, "reason": "htf_extension", "detail": detail}
     return {"hit": True, "reason": "ok", "detail": detail}
 
 

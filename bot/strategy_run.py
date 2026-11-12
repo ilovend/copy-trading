@@ -36,7 +36,7 @@ from strategy_engine import (INTERVAL_S, StrategyEngine, ladder_of, log,  # noqa
 
 FAPI = "https://fapi.binance.com"
 WS = "wss://fstream.binance.com/stream"
-BARS_KEEP = 120
+BARS_KEEP = 1500       # 25 小时 1m，够聚合出 HTF 结构
 
 
 def scan_universe(cfg: dict) -> list[str]:
@@ -218,12 +218,15 @@ class Runner:
 
     async def _universe_loop(self) -> None:
         while not self._stop.is_set():
+            # 启动时 run() 已经扫过一次，先等一个周期再重扫，避免重复订阅
+            refresh = float((self.cfg.get("universe") or {}).get("refresh_min", 5) or 5)
+            await asyncio.sleep(max(30.0, refresh * 60))
+            if self._stop.is_set():
+                return
             try:
                 await asyncio.to_thread(self._scan_and_prefill)
             except Exception as e:  # noqa: BLE001
                 log(f"涨榜扫描失败: {e}")
-            refresh = float((self.cfg.get("universe") or {}).get("refresh_min", 5) or 5)
-            await asyncio.sleep(max(30.0, refresh * 60))
 
     # ------------------------------------------------------------- 主流程
     async def run(self) -> None:
@@ -294,12 +297,17 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
         return
     from strategy_engine import ladder_of
     trade = cfg.get("trade") or {}
+    sig = cfg.get("signal") or {}
     bar_s = INTERVAL_S.get(cfg.get("interval", "1m"), 60)
     hold_bars = max(1, int(round(float(trade.get("max_hold_s", 180) or 180) / bar_s)))
+    warm = max(60, (int(sig.get("htf_lookback", 12)) + 2) * int(sig.get("htf_minutes", 15))
+               if sig.get("htf_enabled") else 60)
     print(f"回放 {len(syms)} 个币 × 最近 {bars_per_symbol} 根 "
-          f"{cfg.get('interval')}\n"
+          f"{cfg.get('interval')}（预热 {warm} 根）\n"
           f"  止损 {trade.get('sl_pct')}% · 阶梯 {ladder_of(trade)} · "
           f"追踪 {trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp · "
+          f"HTF {'开' if sig.get('htf_enabled') else '关'} "
+          f"{sig.get('htf_minutes')}m/{sig.get('htf_high_zone')}/{sig.get('htf_ext_atr')}ATR · "
           f"最长 {hold_bars} 根（不含加仓）\n")
     total = wins = 0
     pnls: list[float] = []
@@ -311,7 +319,7 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
             continue
         hits = 0
         sym_pnl = 0.0
-        for i in range(60, len(bars) - 1):
+        for i in range(warm, len(bars) - 1):
             if not SP.evaluate(bars[:i + 1], cfg.get("signal") or {})["hit"]:
                 continue
             hits += 1

@@ -1081,7 +1081,12 @@ class App:
                   ("上影/振幅 下限", "signal.upper_min_ratio"),
                   ("下影/振幅 上限", "signal.lower_max_ratio"),
                   ("振幅/TR 下限", "signal.min_range_atr"),
-                  ("冷却根数", "signal.cooldown_bars"))),
+                  ("冷却根数", "signal.cooldown_bars"),
+                  ("HTF 周期(分钟)", "signal.htf_minutes"),
+                  ("HTF 回看根数", "signal.htf_lookback"),
+                  ("HTF 均线周期", "signal.htf_ema"),
+                  ("HTF 高位阈值", "signal.htf_high_zone"),
+                  ("HTF 偏离 ATR", "signal.htf_ext_atr"))),
         ("交易与风控", (("单笔名义 (U)", "trade.notional"),
                   ("最多同时持仓", "trade.max_positions"),
                   ("止损 %", "trade.sl_pct"),
@@ -1125,6 +1130,7 @@ class App:
         self.cb_sg_interval.set(cfg.get("interval", "1m"))
         self.var_sg_push.set(bool(cfg.get("push", True)))
         self.var_sg_lev.set(bool((cfg.get("trade") or {}).get("manage_leverage")))
+        self.var_sg_htf.set(bool((cfg.get("signal") or {}).get("htf_enabled", True)))
         for key, var in self.sg_vars.items():
             var.set(self._sg_fmt(self._sg_get(cfg, key)))
 
@@ -1201,6 +1207,14 @@ class App:
         self.var_sg_lev = tk.BooleanVar()
         ttk.Checkbutton(parent, text="下单前设置该币杠杆（会改账户全局设置）",
                         variable=self.var_sg_lev).pack(anchor="w", pady=(8, 0))
+        self.var_sg_htf = tk.BooleanVar()
+        ttk.Checkbutton(parent, text="启用长周期位置过滤（HTF 高位 + 偏离均线才做空）",
+                        variable=self.var_sg_htf).pack(anchor="w", pady=(4, 0))
+        ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
+            "HTF 位置由 1m 聚合得到：要求信号那根的高点落在 HTF 区间的「高位阈值」以上"
+            "（1.0 = 正好是区间最高），且收盘价相对 HTF 均线至少偏离「HTF 偏离 ATR」个 ATR。"
+            "没把握就先用默认 15 分钟 / 0.75 / 0.8。"
+        )).pack(anchor="w", pady=(4, 0))
         ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
             "止盈比例按「平掉当时剩余仓位的百分比」算：先平 50%，再平剩余的一半（累计 75%），"
             "剩下 25% 交给追踪止盈。加仓只在首笔后 add_window_s 内、最多 max_adds 次，"
@@ -1236,6 +1250,7 @@ class App:
         cfg["interval"] = self.cb_sg_interval.get() or "1m"
         cfg["push"] = bool(self.var_sg_push.get())
         cfg.setdefault("trade", {})["manage_leverage"] = bool(self.var_sg_lev.get())
+        cfg.setdefault("signal", {})["htf_enabled"] = bool(self.var_sg_htf.get())
         for key, var in self.sg_vars.items():
             raw = var.get().strip()
             default = self._sg_get(SC.DEFAULTS, key)
