@@ -227,6 +227,22 @@ class ExecClient:
         return _request("DELETE", "/fapi/v1/allOpenOrders",
                         {"symbol": symbol}, key=self.key, secret=self.secret)
 
+    def test_order(self, symbol: str, side: str, qty: float, *,
+                   order_type: str = "LIMIT", price: float | None = None,
+                   time_in_force: str | None = None,
+                   position_side: str | None = None) -> dict:
+        """币安下单预检接口：校验签名与参数，不会真的下单。"""
+        params = {"symbol": symbol, "side": side, "type": order_type,
+                  "quantity": qty, "newOrderRespType": "RESULT"}
+        if position_side:
+            params["positionSide"] = position_side
+        if price is not None:
+            params["price"] = price
+        if time_in_force:
+            params["timeInForce"] = time_in_force
+        return _request("POST", "/fapi/v1/order/test", params,
+                        key=self.key, secret=self.secret)
+
     # ------------------------------------------------------------ test
     def test(self) -> dict:
         if not self.key or not self.secret:
