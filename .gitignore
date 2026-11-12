@@ -13,6 +13,7 @@ gui/state.json
 gui/gui.log
 gui/copy_config.json
 gui/autojoin_config.json
+gui/strategy_config.json
 
 # ---- runtime data ----
 bot/data/

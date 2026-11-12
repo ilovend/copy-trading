@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bot"))
 
 import listen_copy as L
+import strategy_config as SC  # noqa: E402
 import theme  # noqa: E402
 from version import __version__ as VERSION  # noqa: E402
 
@@ -81,15 +82,18 @@ class App:
         self.tab_copy = ttk.Frame(self.nb, padding=(14, 14, 14, 10))
         self.tab_push = ttk.Frame(self.nb, padding=(14, 14, 14, 10))
         self.tab_join = ttk.Frame(self.nb, padding=(10, 10, 10, 8))
+        self.tab_strategy = ttk.Frame(self.nb, padding=(14, 14, 14, 10))
         self.nb.add(self.tab_monitor, text="仓位监控")
         self.nb.add(self.tab_copy, text="仓位复制")
         self.nb.add(self.tab_push, text="仓位推送")
         self.nb.add(self.tab_join, text="自动跟单")
+        self.nb.add(self.tab_strategy, text="自研策略")
 
         self._build_monitor(self.tab_monitor)
         self._build_copy(self.tab_copy)
         self._build_push(self.tab_push)
         self._build_autojoin(self.tab_join)
+        self._build_strategy(self.tab_strategy)
         self._refresh_env_labels()
 
     # ------------------------------------------------------------- 监控 tab
@@ -130,6 +134,7 @@ class App:
         box.pack(fill="x")
         self.var_status = tk.StringVar(value="○ 未运行")
         self.var_copy = tk.StringVar(value="○ 未运行")
+        self.var_strategy = tk.StringVar(value="○ 未运行")
         self.var_join = tk.StringVar(value="○ 未运行")
         self.var_tg = tk.StringVar()
         self.var_proxy = tk.StringVar()
@@ -137,6 +142,7 @@ class App:
         self.status_labels: dict[str, ttk.Label] = {}
         for key, label, var in (("monitor", "监控", self.var_status),
                                 ("copy", "复制", self.var_copy),
+                                ("strategy", "自研策略", self.var_strategy),
                                 ("autojoin", "自动跟单", self.var_join),
                                 ("push", "推送", self.var_tg),
                                 ("proxy", "代理", self.var_proxy),
@@ -173,12 +179,14 @@ class App:
     def _apply_theme_widgets(self) -> None:
         """tk.Text 和 Treeview 不受 ttk 样式控制，切主题时要单独刷新。"""
         p = theme.palette(self.theme_mode)
-        self.log.configure(bg=p["log_bg"], fg=p["log_fg"],
-                           insertbackground=p["log_fg"],
-                           selectbackground=p["log_sel"], selectforeground=p["fg"])
-        for tag, key in (("info", "log_info"), ("ok", "log_ok"), ("warn", "log_warn"),
-                         ("err", "log_err"), ("fill", "log_fill"), ("close", "log_close")):
-            self.log.tag_config(tag, foreground=p[key])
+        logs = [self.log] + ([self.slog] if getattr(self, "slog", None) is not None else [])
+        for w in logs:
+            w.configure(bg=p["log_bg"], fg=p["log_fg"],
+                        insertbackground=p["log_fg"],
+                        selectbackground=p["log_sel"], selectforeground=p["fg"])
+            for tag, key in (("info", "log_info"), ("ok", "log_ok"), ("warn", "log_warn"),
+                             ("err", "log_err"), ("fill", "log_fill"), ("close", "log_close")):
+                w.tag_config(tag, foreground=p[key])
         self.tree.tag_configure("stripe", background=p["stripe"])
         self._restripe()
 
@@ -210,6 +218,7 @@ class App:
         canvas.configure(yscrollcommand=vsb.set)
         canvas.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
+        inner._canvas = canvas  # 供调用方复位滚动位置
 
         def _wheel(event) -> None:
             canvas.yview_scroll(int(-event.delta / 120), "units")
@@ -1057,6 +1066,172 @@ class App:
         self.save_aj()
         self.start_job("autojoin", pass_only=False, script="auto_join.py")
 
+    # ------------------------------------------------------------ 自研策略 tab
+    _SG_SPEC = (
+        ("扫描", (("候选池数量", "universe.top_n"),
+                  ("24h 涨幅下限 %", "universe.min_change_pct"),
+                  ("24h 成交额下限 (U)", "universe.min_quote_volume"),
+                  ("榜单刷新 (分钟)", "universe.refresh_min"))),
+        ("信号", (("放量倍数 x", "signal.vol_mult"),
+                  ("波动放大 x", "signal.tr_mult"),
+                  ("拉升幅度 %", "signal.pump_pct"),
+                  ("拉升回看根数", "signal.pump_lookback"),
+                  ("实体/振幅 上限", "signal.body_max_ratio"),
+                  ("上影/振幅 下限", "signal.upper_min_ratio"),
+                  ("下影/振幅 上限", "signal.lower_max_ratio"),
+                  ("振幅/TR 下限", "signal.min_range_atr"),
+                  ("冷却根数", "signal.cooldown_bars"))),
+        ("交易与风控", (("单笔名义 (U)", "trade.notional"),
+                  ("最多同时持仓", "trade.max_positions"),
+                  ("止盈 %", "trade.tp_pct"),
+                  ("止损 %", "trade.sl_pct"),
+                  ("最长持仓 (秒)", "trade.max_hold_s"),
+                  ("当日亏损上限 (U)", "trade.max_daily_loss"),
+                  ("滑点上限 %", "trade.max_slippage_pct"),
+                  ("杠杆", "trade.leverage"),
+                  ("IOC 缓冲 %", "trade.ioc_buffer_pct"),
+                  ("强平时间 HH:MM", "trade.cutoff"))),
+    )
+
+    @staticmethod
+    def _sg_get(cfg: dict, key: str):
+        cur = cfg
+        for part in key.split("."):
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(part)
+        return cur
+
+    @staticmethod
+    def _sg_fmt(value) -> str:
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return "" if value is None else str(value)
+
+    def _build_strategy(self, parent: ttk.Frame) -> None:
+        cfg = SC.load()
+        parent = self._scroll_area(parent)
+        self.sg_vars: dict[str, tk.StringVar] = {}
+
+        ttk.Label(parent, text="自研策略", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=820, text=(
+            "放量急拉之后，1m / 5m 收盘出现「阴线 + 长上影」的 pinbar 就立刻做空；"
+            "止盈 / 止损 / 超时 / 收盘前强平全自动，不扛单、不隔夜。"
+            "先用影子或干跑观察信号质量，再考虑实盘。"
+        )).pack(anchor="w", pady=(2, 10))
+
+        mode_box = ttk.LabelFrame(parent, text="运行模式", padding=10)
+        mode_box.pack(fill="x")
+        self._sg_mode_labels = {"影子：只记录不下单": "shadow",
+                                "干跑：打印订单不发送": "live_dry",
+                                "实盘：真实下单": "live"}
+        cur_mode = cfg.get("mode", "shadow")
+        self.cb_sg_mode = ttk.Combobox(mode_box, values=list(self._sg_mode_labels),
+                                       state="readonly", width=32)
+        self.cb_sg_mode.set(next((k for k, v in self._sg_mode_labels.items()
+                                  if v == cur_mode), list(self._sg_mode_labels)[0]))
+        self.cb_sg_mode.grid(row=0, column=0, sticky="w")
+        ttk.Label(mode_box, text="K 线周期", style="Muted.TLabel").grid(
+            row=0, column=1, padx=(18, 6))
+        self.cb_sg_interval = ttk.Combobox(mode_box, values=["1m", "5m"],
+                                           state="readonly", width=6)
+        self.cb_sg_interval.set(cfg.get("interval", "1m"))
+        self.cb_sg_interval.grid(row=0, column=2, sticky="w")
+        self.var_sg_push = tk.BooleanVar(value=bool(cfg.get("push", True)))
+        ttk.Checkbutton(mode_box, text="开平仓推 Telegram",
+                        variable=self.var_sg_push).grid(row=0, column=3, padx=(20, 0))
+
+        for title, fields in self._SG_SPEC:
+            box = ttk.LabelFrame(parent, text=title, padding=10)
+            box.pack(fill="x", pady=(10, 0))
+            for i, (label, key) in enumerate(fields):
+                r, c = divmod(i, 2)
+                cell = ttk.Frame(box)
+                cell.grid(row=r, column=c, sticky="w", padx=(0, 26), pady=3)
+                ttk.Label(cell, text=label, width=18, style="Muted.TLabel").pack(side="left")
+                var = tk.StringVar(value=self._sg_fmt(self._sg_get(cfg, key)))
+                ttk.Entry(cell, textvariable=var, width=15).pack(side="left")
+                self.sg_vars[key] = var
+
+        self.var_sg_lev = tk.BooleanVar(
+            value=bool((cfg.get("trade") or {}).get("manage_leverage")))
+        ttk.Checkbutton(parent, text="下单前设置该币杠杆（会改账户全局设置）",
+                        variable=self.var_sg_lev).pack(anchor="w", pady=(8, 0))
+
+        btns = ttk.Frame(parent)
+        btns.pack(fill="x", pady=(12, 0))
+        ttk.Button(btns, text="保存参数", command=self.save_strategy_cfg).pack(side="left")
+        ttk.Button(btns, text="启动", style="Accent.TButton",
+                   command=self.start_strategy).pack(side="left", padx=8)
+        ttk.Button(btns, text="停止", command=self.stop_strategy).pack(side="left")
+        ttk.Button(btns, text="回放最近 500 根", command=lambda: self.replay_strategy(500)
+                   ).pack(side="left", padx=8)
+        ttk.Label(btns, style="Dim.TLabel", text="回放只读，不会下单").pack(
+            side="left", padx=6)
+
+        logframe = ttk.LabelFrame(parent, text="策略日志", padding=(8, 6))
+        logframe.pack(fill="both", expand=True, pady=(12, 0))
+        self.slog = tk.Text(logframe, height=11, wrap="none", font=(theme.MONO, 10),
+                            relief="flat", borderwidth=0, padx=8, pady=6)
+        ssb = ttk.Scrollbar(logframe, orient="vertical", command=self.slog.yview)
+        self.slog.configure(yscrollcommand=ssb.set)
+        self.slog.pack(side="left", fill="both", expand=True)
+        ssb.pack(side="right", fill="y")
+        self._apply_theme_widgets()
+        self.root.after(200, lambda: parent._canvas.yview_moveto(0))
+
+    def save_strategy_cfg(self) -> bool:
+        cfg = SC.load()
+        cfg["mode"] = self._sg_mode_labels.get(self.cb_sg_mode.get(), "shadow")
+        cfg["interval"] = self.cb_sg_interval.get() or "1m"
+        cfg["push"] = bool(self.var_sg_push.get())
+        cfg.setdefault("trade", {})["manage_leverage"] = bool(self.var_sg_lev.get())
+        for key, var in self.sg_vars.items():
+            raw = var.get().strip()
+            default = self._sg_get(SC.DEFAULTS, key)
+            try:
+                if isinstance(default, int):
+                    val = int(float(raw))
+                elif isinstance(default, float):
+                    val = float(raw)
+                else:
+                    val = raw
+            except ValueError:
+                messagebox.showwarning("格式错误", f"{key} 需要数字，当前是 {raw!r}")
+                return False
+            cur = cfg
+            parts = key.split(".")
+            for part in parts[:-1]:
+                cur = cur.setdefault(part, {})
+            cur[parts[-1]] = val
+        SC.save(cfg)
+        self._append(f"策略参数已保存：{cfg['mode']} · {cfg['interval']} · "
+                     f"单笔 {cfg['trade']['notional']}U", "ok")
+        return True
+
+    def start_strategy(self) -> None:
+        if not self.save_strategy_cfg():
+            return
+        cfg = SC.load()
+        if cfg.get("mode") == "live":
+            if not messagebox.askokcancel(
+                    "确认实盘",
+                    f"策略将以实盘模式运行：单笔 {cfg['trade']['notional']}U，"
+                    f"止盈 {cfg['trade']['tp_pct']}% / 止损 {cfg['trade']['sl_pct']}%。\n\n"
+                    "先确认盘口深度和金额都可接受。继续？"):
+                return
+        self.start_job("strategy", pass_only=False, script="strategy_run.py")
+
+    def stop_strategy(self) -> None:
+        self.stop_job("strategy")
+        self.stop_job("replay")
+
+    def replay_strategy(self, bars: int) -> None:
+        if not self.save_strategy_cfg():
+            return
+        self.start_job("replay", pass_only=False, script="strategy_run.py",
+                       extra_args=["--replay", str(bars)])
+
     # --------------------------------------------------------------- state
     def _refresh_env_labels(self) -> None:
         has = bool(L.TG_TOKEN and L.TG_CHAT)
@@ -1121,14 +1296,16 @@ class App:
             return []
 
     # ------------------------------------------------------------ process
-    JOB_LABEL = {"monitor": "监控", "copy": "复制", "autojoin": "跟单"}
+    JOB_LABEL = {"monitor": "监控", "copy": "复制", "autojoin": "跟单",
+                 "strategy": "策略", "replay": "回放"}
 
     def _alive(self, name: str) -> bool:
         proc = self.jobs.get(name)
         return bool(proc and proc.poll() is None)
 
     def start_job(self, name: str, ids: list[str] | None = None,
-                  script: str = "listen_copy.py", pass_only: bool = True) -> None:
+                  script: str = "listen_copy.py", pass_only: bool = True,
+                  extra_args: list[str] | None = None) -> None:
         if self._alive(name):
             messagebox.showinfo("提示", f"{self.JOB_LABEL[name]}已经在运行了")
             return
@@ -1150,6 +1327,8 @@ class App:
         cmd = [PY, "-u", str(ROOT / "bot" / script)]
         if pass_only and ids:
             cmd += ["--only", ",".join(ids)]
+        if extra_args:
+            cmd += list(extra_args)
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
@@ -1169,6 +1348,10 @@ class App:
             extra = {"shadow": "影子", "live_dry": "干跑", "live": "实盘"}[mode_label]
             self._append(f"启动复制（{extra}，含监听）："
                          f"{'全部组合' if not ids else '选中 ' + str(len(ids)) + ' 个'}", "ok")
+        elif name == "strategy":
+            self._append("启动自研策略…（日志见下方）", "ok", self.slog)
+        elif name == "replay":
+            self._append("回放最近 K 线，统计信号与假想盈亏…", "info", self.slog)
         else:
             self._append(f"启动 {self.JOB_LABEL[name]}："
                          f"{'全部组合' if not ids else '选中 ' + str(len(ids)) + ' 个'}", "ok")
@@ -1181,7 +1364,7 @@ class App:
             return
         try:
             for line in stream:
-                self.q.put(("log", line.rstrip()))
+                self.q.put(("log", (name, line.rstrip())))
         except Exception:  # noqa: BLE001
             pass
 
@@ -1221,6 +1404,7 @@ class App:
         """复制进程内部就会监听成交，所以复制在跑时「监控」算随复制托管。"""
         copy_alive = self._alive("copy")
         for key, var in (("monitor", self.var_status), ("copy", self.var_copy),
+                         ("strategy", self.var_strategy),
                          ("autojoin", self.var_join)):
             alive = self._alive(key)
             if alive:
@@ -1422,7 +1606,9 @@ class App:
             while True:
                 kind, payload = self.q.get_nowait()
                 if kind == "log":
-                    self._append(payload, self._tag_for(payload))
+                    name, text = payload
+                    target = self.slog if name in ("strategy", "replay") else self.log
+                    self._append(text, self._tag_for(text), target)
                 elif kind == "rows":
                     self._fill_tree(payload)
                     self._refresh_env_labels()
@@ -1448,15 +1634,20 @@ class App:
             return "fill"
         if "🔴" in line:
             return "close"
+        if line.startswith("OPEN") or line.startswith("开仓"):
+            return "fill"
+        if line.startswith("CLOSE") or line.startswith("平仓"):
+            return "close"
         if "error" in low or "warn" in low or "失败" in line or "中断" in line:
             return "warn"
         if "connected" in low or "keepalive" in low or "watching" in low:
             return "ok"
         return "info"
 
-    def _append(self, line: str, tag: str = "info") -> None:
-        self.log.insert("end", line + "\n", tag)
-        self.log.see("end")
+    def _append(self, line: str, tag: str = "info", widget: tk.Text | None = None) -> None:
+        target = widget or self.log
+        target.insert("end", line + "\n", tag)
+        target.see("end")
         try:
             LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
             with LOG_PATH.open("a", encoding="utf-8") as f:
