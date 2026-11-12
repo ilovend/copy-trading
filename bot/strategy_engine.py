@@ -26,6 +26,7 @@ INTERVAL_S = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 360
 
 
 _LOG_FILE = None
+STATE_PATH = Path(__file__).resolve().parent / "data" / "strategy-open.json"
 
 
 def set_log_file(path) -> None:
@@ -461,6 +462,7 @@ class StrategyEngine:
                         f"放量 {detail.get('vol_ratio')}x  {tr_txt}"
                         f"上影 {(detail.get('upper_ratio') or 0) * 100:.0f}%")
             self._notify(head)
+        self._save_state()
         return True
 
     def _ensure_leverage(self, symbol: str) -> None:
@@ -576,6 +578,9 @@ class StrategyEngine:
     def manage(self, prices: dict[str, float]) -> None:
         if not self.positions:
             return
+        self._reconcile()
+        if not self.positions:
+            return
         sl = float(self.trade.get("sl_pct", 0.5) or 0.5)
         max_hold = float(self.trade.get("max_hold_s", 180) or 180)
         trail_act = float(self.trade.get("trail_activate_pct", 0) or 0)
@@ -658,13 +663,18 @@ class StrategyEngine:
         adds = len(pos["entries"]) - 1
         last = float(pos.get("last_add_pnl", 0.0))
         if adds < max_adds and (last - pnl) >= step:
-            self._basket_add(symbol, pos, mark, pnl)
+            if now - float(pos.get("last_add_try", 0) or 0) >= 30:
+                pos["last_add_try"] = now
+                self._basket_add(symbol, pos, mark, pnl)
 
     def _basket_add(self, symbol: str, pos: dict, mark: float, pnl: float) -> None:
         b = self.basket
         notional = float(b.get("notional", self.trade.get("notional", 5)) or 5)
         flt = self._flt(symbol)
         qty = self._floor_step(notional / mark, flt["step"])
+        mn = flt["min_notional"] * 1.01
+        if qty <= 0 or qty * mark < mn:      # 最小名义优先，向上补一个步长
+            qty = self._floor_step(mn / mark + flt["step"], flt["step"])
         if qty <= 0:
             return
         bid, ask = self._book(symbol)
@@ -697,6 +707,85 @@ class StrategyEngine:
             f"（{len(pos['entries'])} 笔）")
         self._notify(f"➕ 均价加空 {symbol}\n{qty:g} @ {entry:g}\n"
                      f"共 {pos['qty']:g} 均价 {pos['avg']:g}")
+        self._save_state()
+
+    # ------------------------------------------------------- 持仓持久化 / 对账
+    def _save_state(self) -> None:
+        """把策略持仓写到磁盘，重启后能接管（避免重启变成裸仓）。"""
+        if self.mode != "live":
+            return
+        try:
+            STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            data = {s: {"qty": p["qty"], "avg": p["avg"],
+                        "opened_at": p["opened_at"], "entries": p["entries"]}
+                    for s, p in self.positions.items()}
+            tmp = STATE_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(STATE_PATH)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def restore_open(self) -> None:
+        """启动时接管上次未平的策略持仓（先与交易所对账）。"""
+        if self.mode != "live" or not STATE_PATH.exists():
+            return
+        try:
+            saved = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            live = {r["symbol"]: r for r in self._ex_client().positions()}
+        except Exception as e:  # noqa: BLE001
+            log(f"⚠ 恢复持仓失败（查交易所）: {e}")
+            return
+        for sym, p in saved.items():
+            r = live.get(sym)
+            amt = abs(float(r.get("positionAmt") or 0)) if r else 0
+            if amt <= 0:
+                log(f"恢复：{sym} 交易所已无持仓，跳过")
+                continue
+            entry = float(r.get("entryPrice") or 0) or float(p.get("avg") or 0)
+            qty = amt
+            self.positions[sym] = {
+                "symbol": sym, "mode": self.mode,
+                "entries": [{"qty": qty, "price": entry, "ts": time.time()}],
+                "qty": qty, "avg": entry,
+                "opened_at": float(p.get("opened_at") or time.time()),
+                "peak": 0.0, "trail_on": False, "trail_level": 0.0,
+                "tp_done": [False, False], "realized": 0.0, "parts": 0,
+                "detail": {}, "last_add_pnl": 0.0,
+            }
+            held = (time.time() - self.positions[sym]["opened_at"]) / 60
+            log(f"⚠ 接管未平持仓 {sym} {qty:g} @ {entry:g}（已持有 {held:.0f} 分钟）")
+            self._notify(f"⚠️ 重启接管持仓\n{sym} 空 {qty:g} @ {entry:g}\n"
+                         f"已持有 {held:.0f} 分钟，继续执行止盈/止损/超时")
+        self._save_state()
+
+    def _reconcile(self) -> None:
+        """交易所已无持仓（手动平/强平）时，清理本地状态，避免幽灵仓位。"""
+        if self.mode != "live" or not self.positions:
+            return
+        now = time.time()
+        if now - float(getattr(self, "_last_recon", 0) or 0) < 10:
+            return
+        self._last_recon = now
+        try:
+            live = {r["symbol"]: r for r in self._ex_client().positions()}
+        except Exception:  # noqa: BLE001
+            return
+        for sym in list(self.positions):
+            r = live.get(sym)
+            amt = abs(float(r.get("positionAmt") or 0)) if r else 0
+            if amt > 0:
+                continue
+            pos = self.positions.pop(sym)
+            self._record("close", symbol=sym, reason="external", qty=0.0,
+                         pnl_total=round(float(pos.get("realized") or 0), 6),
+                         entries=len(pos.get("entries") or []),
+                         notes="交易所已无持仓，判定为手动平仓")
+            log(f"⚠ {sym} 交易所已无持仓（手动平仓？），清理本地状态")
+            self._notify(f"⚠️ 检测到 {sym} 已在交易所被平掉（可能是手动），已清理策略状态")
+        self._save_state()
 
     def _close_partial(self, symbol: str, reason: str, mark: float,
                        frac: float) -> bool:
@@ -762,6 +851,7 @@ class StrategyEngine:
         held = time.time() - pos["opened_at"]
         total = pos["realized"]
         self.positions.pop(symbol, None)
+        self._save_state()
         self._cooldown[symbol] = time.time()
         self.stats["closes"] += 1
         if total > 0:

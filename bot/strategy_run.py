@@ -404,6 +404,7 @@ class Runner:
             f"最长持仓={trade.get('max_hold_s')}s")
         await asyncio.to_thread(self.engine.load_filters)
         await asyncio.to_thread(self._scan_and_prefill)
+        await asyncio.to_thread(self.engine.restore_open)
 
         try:
             from listen_copy import tg_send
