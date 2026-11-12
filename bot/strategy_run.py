@@ -40,12 +40,13 @@ BARS_KEEP = 120
 
 
 def scan_universe(cfg: dict) -> list[str]:
-    """涨幅榜：24h 涨幅 + 成交额过滤，取前 N。"""
+    """候选池：默认按 24h 涨幅排序取前 N；剥头皮预设可按成交额排序。"""
     from copy_engine import http_json
     u = cfg.get("universe") or {}
     top_n = int(u.get("top_n", 15) or 15)
     min_chg = float(u.get("min_change_pct", 3.0) or 0)
     min_qv = float(u.get("min_quote_volume", 50e6) or 0)
+    sort_by = str(u.get("sort_by") or "change").lower()
     rows = http_json(f"{FAPI}/fapi/v1/ticker/24hr", timeout=20)
     cand = []
     for r in rows:
@@ -61,7 +62,10 @@ def scan_universe(cfg: dict) -> list[str]:
         if last <= 0 or qv < min_qv or chg < min_chg:
             continue
         cand.append((chg, qv, sym))
-    cand.sort(key=lambda x: x[0], reverse=True)
+    if sort_by == "volume":
+        cand.sort(key=lambda x: x[1], reverse=True)
+    else:
+        cand.sort(key=lambda x: x[0], reverse=True)
     return [sym for _, _, sym in cand[:top_n]]
 
 
@@ -336,9 +340,15 @@ def main() -> None:
     ap.add_argument("--mode", default="", help="覆盖模式 shadow/live_dry/live")
     ap.add_argument("--interval", default="", help="覆盖 K 线周期")
     ap.add_argument("--top", type=int, default=0, help="覆盖候选池数量")
+    ap.add_argument("--preset", default="", help="覆盖参数预设：scalp / swing")
     args = ap.parse_args()
 
     cfg = load_cfg()
+    if args.preset:
+        from strategy_config import PRESETS, apply_preset
+        if args.preset not in PRESETS:
+            sys.exit(f"未知预设 {args.preset}，可选：{', '.join(PRESETS)}")
+        cfg = apply_preset(cfg, args.preset)
     if args.mode:
         cfg["mode"] = args.mode
     if args.interval:

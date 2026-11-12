@@ -1071,7 +1071,8 @@ class App:
         ("扫描", (("候选池数量", "universe.top_n"),
                   ("24h 涨幅下限 %", "universe.min_change_pct"),
                   ("24h 成交额下限 (U)", "universe.min_quote_volume"),
-                  ("榜单刷新 (分钟)", "universe.refresh_min"))),
+                  ("榜单刷新 (分钟)", "universe.refresh_min"),
+                  ("榜单排序", "universe.sort_by"))),
         ("信号", (("放量倍数 x", "signal.vol_mult"),
                   ("波动放大 x", "signal.tr_mult"),
                   ("拉升幅度 %", "signal.pump_pct"),
@@ -1116,6 +1117,24 @@ class App:
             return str(int(value))
         return "" if value is None else str(value)
 
+    def _sg_fill(self, cfg: dict) -> None:
+        """把配置回填到控件（启动时和载入预设时共用）。"""
+        cur = cfg.get("mode", "shadow")
+        self.cb_sg_mode.set(next((k for k, v in self._sg_mode_labels.items()
+                                  if v == cur), list(self._sg_mode_labels)[0]))
+        self.cb_sg_interval.set(cfg.get("interval", "1m"))
+        self.var_sg_push.set(bool(cfg.get("push", True)))
+        self.var_sg_lev.set(bool((cfg.get("trade") or {}).get("manage_leverage")))
+        for key, var in self.sg_vars.items():
+            var.set(self._sg_fmt(self._sg_get(cfg, key)))
+
+    def load_strategy_preset(self) -> None:
+        name = self._preset_labels.get(self.cb_sg_preset.get(), "scalp")
+        cfg = SC.apply_preset(SC.load(), name)
+        self._sg_fill(cfg)
+        self._append(f"已载入预设「{self.cb_sg_preset.get()}」，"
+                     f"点「保存参数」或「启动」后生效", "info", self.slog)
+
     def _build_strategy(self, parent: ttk.Frame) -> None:
         cfg = SC.load()
         parent = self._scroll_area(parent)
@@ -1128,6 +1147,19 @@ class App:
             "止盈 / 止损 / 超时 / 收盘前强平全自动，不扛单、不隔夜。"
             "先用影子或干跑观察信号质量，再考虑实盘。"
         )).pack(anchor="w", pady=(2, 10))
+
+        preset_box = ttk.LabelFrame(parent, text="参数预设", padding=10)
+        preset_box.pack(fill="x")
+        self._preset_labels = {"剥头皮：多笔小利，3 分钟内走": "scalp",
+                               "反转：低频大形态，分批 + 追踪": "swing"}
+        self.cb_sg_preset = ttk.Combobox(preset_box, values=list(self._preset_labels),
+                                         state="readonly", width=34)
+        self.cb_sg_preset.current(0)
+        self.cb_sg_preset.grid(row=0, column=0, sticky="w")
+        ttk.Button(preset_box, text="载入预设",
+                   command=self.load_strategy_preset).grid(row=0, column=1, padx=10)
+        ttk.Label(preset_box, text="载入后点「保存参数」或直接「启动」才生效",
+                  style="Dim.TLabel").grid(row=0, column=2, sticky="w")
 
         mode_box = ttk.LabelFrame(parent, text="运行模式", padding=10)
         mode_box.pack(fill="x")
@@ -1158,12 +1190,15 @@ class App:
                 cell = ttk.Frame(box)
                 cell.grid(row=r, column=c, sticky="w", padx=(0, 26), pady=3)
                 ttk.Label(cell, text=label, width=18, style="Muted.TLabel").pack(side="left")
-                var = tk.StringVar(value=self._sg_fmt(self._sg_get(cfg, key)))
-                ttk.Entry(cell, textvariable=var, width=15).pack(side="left")
+                var = tk.StringVar()
+                if key == "universe.sort_by":
+                    ttk.Combobox(cell, textvariable=var, width=13, state="readonly",
+                                 values=["change", "volume"]).pack(side="left")
+                else:
+                    ttk.Entry(cell, textvariable=var, width=15).pack(side="left")
                 self.sg_vars[key] = var
 
-        self.var_sg_lev = tk.BooleanVar(
-            value=bool((cfg.get("trade") or {}).get("manage_leverage")))
+        self.var_sg_lev = tk.BooleanVar()
         ttk.Checkbutton(parent, text="下单前设置该币杠杆（会改账户全局设置）",
                         variable=self.var_sg_lev).pack(anchor="w", pady=(8, 0))
         ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
@@ -1191,6 +1226,7 @@ class App:
         self.slog.configure(yscrollcommand=ssb.set)
         self.slog.pack(side="left", fill="both", expand=True)
         ssb.pack(side="right", fill="y")
+        self._sg_fill(cfg)
         self._apply_theme_widgets()
         self.root.after(200, lambda: parent._canvas.yview_moveto(0))
 
