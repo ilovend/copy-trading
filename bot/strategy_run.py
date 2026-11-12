@@ -31,7 +31,8 @@ import websockets  # noqa: E402
 
 import strategy_volume_pinbar as SP  # noqa: E402
 from strategy_config import load as load_cfg  # noqa: E402
-from strategy_engine import INTERVAL_S, StrategyEngine, log  # noqa: E402
+from strategy_engine import (INTERVAL_S, StrategyEngine, ladder_of, log,  # noqa: E402
+                             simulate_exit)
 
 FAPI = "https://fapi.binance.com"
 WS = "wss://fstream.binance.com/stream"
@@ -223,10 +224,13 @@ class Runner:
     # ------------------------------------------------------------- 主流程
     async def run(self) -> None:
         from version import __version__
+        trade = self.engine.trade
         log(f"自研策略 v{__version__} 启动：模式={self.engine.mode} "
-            f"周期={self.interval} 单笔={self.engine.trade.get('notional')}U "
-            f"TP={self.engine.trade.get('tp_pct')}% SL={self.engine.trade.get('sl_pct')}% "
-            f"最长持仓={self.engine.trade.get('max_hold_s')}s")
+            f"周期={self.interval} 单笔={trade.get('notional')}U "
+            f"止损={trade.get('sl_pct')}% 阶梯={ladder_of(trade)} "
+            f"追踪={trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp "
+            f"加仓={trade.get('max_adds')}次/{trade.get('add_window_s')}s "
+            f"最长持仓={trade.get('max_hold_s')}s")
         await asyncio.to_thread(self.engine.load_filters)
         await asyncio.to_thread(self._scan_and_prefill)
 
@@ -277,19 +281,22 @@ def probe(cfg: dict) -> None:
 def replay(cfg: dict, bars_per_symbol: int) -> None:
     """按当前参数回放最近 N 根 K 线，统计信号频率与假想盈亏（不下单）。
 
-    只做粗估：同根 K 线同时触及止盈止损时按止损算，不含手续费与滑点。
+    出场按引擎同一套规则粗估（阶梯止盈 + 追踪止盈 + 止损 + 超时）：
+    同一根 K 线同时触及止损和止盈时按止损算，不含手续费与滑点，也不模拟加仓。
     """
     syms = scan_universe(cfg)
     if not syms:
         print("候选池为空")
         return
+    from strategy_engine import ladder_of
     trade = cfg.get("trade") or {}
-    tp = float(trade.get("tp_pct", 0.8) or 0.8)
-    sl = float(trade.get("sl_pct", 0.5) or 0.5)
-    max_hold = float(trade.get("max_hold_s", 180) or 180)
-    hold_bars = max(1, int(round(max_hold / INTERVAL_S.get(cfg.get("interval", "1m"), 60))))
+    bar_s = INTERVAL_S.get(cfg.get("interval", "1m"), 60)
+    hold_bars = max(1, int(round(float(trade.get("max_hold_s", 180) or 180) / bar_s)))
     print(f"回放 {len(syms)} 个币 × 最近 {bars_per_symbol} 根 "
-          f"{cfg.get('interval')} · TP{tp}% SL{sl}% 最长 {hold_bars} 根\n")
+          f"{cfg.get('interval')}\n"
+          f"  止损 {trade.get('sl_pct')}% · 阶梯 {ladder_of(trade)} · "
+          f"追踪 {trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp · "
+          f"最长 {hold_bars} 根（不含加仓）\n")
     total = wins = 0
     pnls: list[float] = []
     for sym in syms:
@@ -304,20 +311,7 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
             if not SP.evaluate(bars[:i + 1], cfg.get("signal") or {})["hit"]:
                 continue
             hits += 1
-            entry = bars[i]["c"]
-            tp_px = entry * (1 - tp / 100)
-            sl_px = entry * (1 + sl / 100)
-            pnl = 0.0
-            for j in range(i + 1, min(i + 1 + hold_bars, len(bars))):
-                if bars[j]["h"] >= sl_px:
-                    pnl = -(sl_px / entry - 1) * 100
-                    break
-                if bars[j]["l"] <= tp_px:
-                    pnl = (1 - tp_px / entry) * 100
-                    break
-            else:
-                last = bars[min(i + hold_bars, len(bars) - 1)]["c"]
-                pnl = (1 - last / entry) * 100
+            pnl, _how, _held = simulate_exit(bars, i, trade, bar_s)
             pnls.append(pnl)
             sym_pnl += pnl
             wins += int(pnl > 0)
@@ -328,7 +322,7 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
     if total:
         print(f"信号 {total} 笔 · 胜率 {wins / total * 100:.0f}% · "
               f"均值 {sum(pnls) / total:+.3f}% · 合计 {sum(pnls):+.2f}%")
-        print("（粗估：同根同时触及按止损算，未扣手续费与滑点）")
+        print("（粗估：同根同时触及按止损算，未扣手续费与滑点，未模拟加仓）")
     else:
         print("样本内没有信号：门槛偏高，或这段行情没有这种形态")
 

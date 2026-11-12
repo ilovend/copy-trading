@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""自研策略执行引擎：风控 + 下单 + 持仓管理。
+"""自研策略执行引擎：加仓 / 分批止盈 / 追踪止盈 / 风控。
 
 只做「执行」不做信号判断（信号在 strategy_volume_pinbar）。
 和复制模块完全独立：自己的台账、自己的风控，互不影响；
 唯一共享的是执行账户与 exec_client。
 
-规则（不扛单、不隔夜）：
-    · 入场：信号根收盘后立刻 IOC 限价做空（挂买一价下方一点）
-    · 出场：止盈 / 止损 / 最长持仓 / 收盘前强平，哪个先到走哪个
-    · 实盘平仓 IOC 不成交立刻转市价，避免挂着过夜
+一笔仓位由多次加仓组成：
+    · 首笔：信号触发立刻 IOC 做空
+    · 加仓：add_window_s 内再次出信号，且价格不低于上一笔，最多 max_adds 次
+    · 出场：止损整仓走；止盈按阶梯分批平；剩余仓位追踪止盈
+    · 另外还有最长持仓 / 收盘前强平，不扛单、不隔夜
 """
 from __future__ import annotations
 
@@ -28,6 +29,71 @@ def log(msg: str) -> None:
     print(f"{datetime.now():%H:%M:%S} {msg}", flush=True)
 
 
+def ladder_of(trade: dict) -> list[tuple[float, float]]:
+    """止盈阶梯：[(触发盈利%, 平掉当前仓位的比例), ...]。"""
+    out = []
+    for i in (1, 2):
+        level = float(trade.get(f"tp{i}_pct", 0) or 0)
+        frac = float(trade.get(f"tp{i}_frac", 0) or 0)
+        if level > 0 and frac > 0:
+            out.append((level, min(frac, 1.0)))
+    return out
+
+
+def simulate_exit(bars: list[dict], start: int, trade: dict,
+                  bar_seconds: int = 60) -> tuple[float, str, int]:
+    """回放用的粗估：同一根 K 线同时触及止损和止盈时按止损算。
+
+    返回 (相对开仓名义的盈亏%, 出场原因, 持仓根数)。
+    """
+    entry = float(bars[start]["c"])
+    sl = float(trade.get("sl_pct", 0.5) or 0)
+    ladder = ladder_of(trade)
+    trail_act = float(trade.get("trail_activate_pct", 0) or 0)
+    trail_gap = float(trade.get("trail_gap_pct", 0) or 0)
+    hold_bars = max(1, int(round(float(trade.get("max_hold_s", 180) or 180)
+                                 / max(bar_seconds, 1))))
+    remaining = 1.0
+    realized = 0.0
+    peak = 0.0
+    trail_on = False
+    trail_level = 0.0
+    done = [False] * len(ladder)
+    reason = "timeout"
+    held = 0
+    for j in range(start + 1, min(start + 1 + hold_bars, len(bars))):
+        held = j - start
+        hi, lo, cl = float(bars[j]["h"]), float(bars[j]["l"]), float(bars[j]["c"])
+        if (hi / entry - 1) * 100 >= sl:
+            realized += sl * remaining
+            return realized, "stop_loss", held
+        pnl_best = (entry - lo) / entry * 100
+        pnl_close = (entry - cl) / entry * 100
+        peak = max(peak, pnl_best)
+        for idx, (level, frac) in enumerate(ladder):
+            if done[idx] or pnl_best < level:
+                continue
+            done[idx] = True
+            take = remaining * frac
+            realized += level * take
+            remaining -= take
+            reason = f"tp{idx + 1}"
+        if remaining <= 1e-9:
+            return realized, reason, held
+        if trail_act > 0:
+            if not trail_on and peak >= trail_act:
+                trail_on = True
+                trail_level = max(trail_act, peak - trail_gap)
+            elif trail_on:
+                trail_level = max(trail_level, peak - trail_gap)
+            if trail_on and pnl_close <= trail_level:
+                realized += trail_level * remaining
+                return realized, "trail", held
+    last = float(bars[min(start + hold_bars, len(bars) - 1)]["c"])
+    realized += (entry - last) / entry * 100 * remaining
+    return realized, reason, held
+
+
 class StrategyEngine:
     def __init__(self, cfg: dict, notify: bool | None = None) -> None:
         self.cfg = cfg
@@ -38,7 +104,6 @@ class StrategyEngine:
         self._notify_on = cfg.get("push", True) if notify is None else notify
 
         self.filters: dict[str, dict] = {}
-        self._filters_ready = False
         self._ex = None
         self._hedge: bool | None = None
         self._lev_set: set[str] = set()
@@ -48,8 +113,8 @@ class StrategyEngine:
         self._day = datetime.now().date()
         self._halt = ""
         self.realized_today = self._load_realized_today()
-        self.stats = {"signals": 0, "opens": 0, "closes": 0, "wins": 0,
-                      "pnl": 0.0, "rejects": 0}
+        self.stats = {"signals": 0, "opens": 0, "adds": 0, "closes": 0,
+                      "wins": 0, "pnl": 0.0, "rejects": 0}
 
     # ------------------------------------------------------------- 基础工具
     def _ex_client(self):
@@ -81,14 +146,13 @@ class StrategyEngine:
                 elif t == "PRICE_FILTER":
                     info["tick"] = float(f["tickSize"])
             self.filters[s["symbol"]] = info
-        self._filters_ready = True
         log(f"exchangeInfo 就绪（{len(self.filters)} 个交易对）")
 
     def _flt(self, symbol: str) -> dict:
-        return self.filters.get(symbol) or {"step": 0.001, "tick": 0.0001, "min_notional": 5.0}
+        return self.filters.get(symbol) or {"step": 0.001, "tick": 0.0001,
+                                            "min_notional": 5.0}
 
     def _book(self, symbol: str) -> tuple[float, float]:
-        """返回 (bid, ask)；失败返回 (0,0)。"""
         from copy_engine import http_json
         try:
             d = http_json(f"https://fapi.binance.com/fapi/v1/depth?symbol={symbol}&limit=5")
@@ -115,7 +179,7 @@ class StrategyEngine:
         if side == "SELL":
             ref = bid or fallback
             px = self._tick_round(ref * (1 - buf), tick)
-            if px > ref:                       # 确保是过价，能吃到买一
+            if px > ref:
                 px = self._tick_round(ref - tick, tick)
         else:
             ref = ask or fallback
@@ -159,7 +223,7 @@ class StrategyEngine:
                 r = json.loads(line)
             except Exception:  # noqa: BLE001
                 continue
-            if r.get("kind") == "close":
+            if r.get("kind") in ("close", "close_partial"):
                 total += float(r.get("pnl") or 0)
         return total
 
@@ -183,44 +247,47 @@ class StrategyEngine:
         self._record("reject", symbol=symbol, reason=reason, detail=detail, **extra)
         log(f"SKIP   {symbol:12s} {reason:14s} {detail}")
 
-    # ------------------------------------------------------------- 开仓
     def cooldown_ok(self, symbol: str) -> bool:
         bars = int((self.cfg.get("signal") or {}).get("cooldown_bars", 0))
         last = self._cooldown.get(symbol, 0.0)
         return (time.time() - last) >= bars * self.interval_s
 
-    def open_short(self, symbol: str, detail: dict, signal_price: float) -> bool:
-        self._reset_daily()
-        self.stats["signals"] += 1
-
-        if self.mode not in ("shadow", "live_dry", "live"):
-            self._reject(symbol, "bad_mode", f"未知模式 {self.mode}")
-            return False
+    # ------------------------------------------------------------- 开仓 / 加仓
+    def _episode_guards(self, symbol: str) -> str:
+        """新开一轮仓位前的公共闸门，返回拒绝原因（空串=通过）。"""
         if self._past_cutoff():
-            self._reject(symbol, "cutoff", "已过收盘时间，不再开仓")
-            return False
+            return "已过收盘时间，不再开仓"
         if self._near_cutoff():
-            self._reject(symbol, "near_cutoff", "离强平时间太近，开了也拿不住")
-            return False
+            return "离强平时间太近，开了也拿不住"
         max_loss = float(self.trade.get("max_daily_loss", 0) or 0)
         if self._halt or (max_loss > 0 and self.realized_today <= -max_loss):
             self._halt = self._halt or f"当日亏损已达 {self.realized_today:.2f}U"
-            self._reject(symbol, "daily_loss", self._halt)
-            return False
-        if len(self.positions) >= int(self.trade.get("max_positions", 1) or 1):
-            self._reject(symbol, "max_positions", f"已持有 {len(self.positions)} 个仓位")
-            return False
-        if symbol in self.positions:
-            self._reject(symbol, "dup_symbol", "该币已有策略仓位")
-            return False
-        if not self.cooldown_ok(symbol):
-            self._reject(symbol, "cooldown", "冷却中")
+            return self._halt
+        return ""
+
+    def open_short(self, symbol: str, detail: dict, signal_price: float) -> bool:
+        self._reset_daily()
+        self.stats["signals"] += 1
+        if self.mode not in ("shadow", "live_dry", "live"):
+            self._reject(symbol, "bad_mode", f"未知模式 {self.mode}")
             return False
         if signal_price <= 0:
             self._reject(symbol, "bad_price", f"信号价 {signal_price}")
             return False
+        pos = self.positions.get(symbol)
+        if pos:
+            return self._add(symbol, pos, detail, signal_price)
 
-        # 实盘要确认账户在该币上是空的（复制模块可能同时持仓）
+        reason = self._episode_guards(symbol)
+        if reason:
+            self._reject(symbol, "gate", reason)
+            return False
+        if len(self.positions) >= int(self.trade.get("max_positions", 1) or 1):
+            self._reject(symbol, "max_positions", f"已持有 {len(self.positions)} 个仓位")
+            return False
+        if not self.cooldown_ok(symbol):
+            self._reject(symbol, "cooldown", "冷却中")
+            return False
         if self.mode == "live":
             try:
                 amt = self._ex_client().position(symbol, "SHORT" if self._is_hedge() else None)
@@ -231,6 +298,36 @@ class StrategyEngine:
                 self._reject(symbol, "symbol_busy", f"账户已有持仓 {amt:g}，跳过")
                 return False
 
+        return self._enter(symbol, detail, signal_price, add=False)
+
+    def _add(self, symbol: str, pos: dict, detail: dict, signal_price: float) -> bool:
+        window = float(self.trade.get("add_window_s", 0) or 0)
+        max_adds = int(self.trade.get("max_adds", 0) or 0)
+        if max_adds <= 0 or window <= 0:
+            self._reject(symbol, "add_disabled", "配置里没开加仓")
+            return False
+        age = time.time() - pos["opened_at"]
+        if age > window:
+            self._reject(symbol, "add_window", f"距首笔 {age:.0f}s > {window:g}s")
+            return False
+        if len(pos["entries"]) > max_adds:
+            self._reject(symbol, "max_adds", f"已加 {len(pos['entries']) - 1}/{max_adds} 次")
+            return False
+        reason = self._episode_guards(symbol)
+        if reason:
+            self._reject(symbol, "gate", reason)
+            return False
+        min_gain = float(self.trade.get("add_min_gain_pct", 0) or 0)
+        last_px = pos["entries"][-1]["price"]
+        if signal_price < last_px * (1 + min_gain / 100.0):
+            self._reject(symbol, "add_price",
+                         f"信号价 {signal_price:g} 低于上一笔 {last_px:g}，不追空")
+            return False
+        log(f"ADD?   {symbol:12s} 第 {len(pos['entries'])} 次加仓 "
+            f"距今 {age:.0f}s 均价 {pos['avg']:g}")
+        return self._enter(symbol, detail, signal_price, add=True)
+
+    def _enter(self, symbol: str, detail: dict, signal_price: float, add: bool) -> bool:
         bid, ask = self._book(symbol)
         max_slip = float(self.trade.get("max_slippage_pct", 0.3) or 0.3)
         if bid > 0:
@@ -256,22 +353,18 @@ class StrategyEngine:
             return False
 
         px = self._ioc_price(symbol, "SELL", bid, ask, signal_price)
-        self._cooldown[symbol] = time.time()      # 真正要下单了才计入冷却
-        params = {"symbol": symbol, "side": "SELL", "qty": qty, "price": px,
-                  "hedge": self._is_hedge()}
-        log(f"OPEN?  {symbol:12s} SHORT qty={qty:g} px={px:g} "
+        self._cooldown[symbol] = time.time()
+        log(f"{'ADD ' if add else 'OPEN'}?  {symbol:12s} SHORT qty={qty:g} px={px:g} "
             f"名义={qty * signal_price:.2f}U 模式={self.mode}")
-        self._record("open_attempt", symbol=symbol, qty=qty, price=px,
-                     signal_price=signal_price, notional=round(qty * signal_price, 4),
-                     mode=self.mode, signal=detail)
 
+        entry = px if bid > 0 else signal_price
         if self.mode == "live":
             try:
                 self._ensure_leverage(symbol)
                 resp = self._send(symbol, "SELL", qty, px, "SHORT")
             except Exception as e:  # noqa: BLE001
                 self._reject(symbol, "order_failed", str(e)[:160])
-                self._notify(f"⚠️ 策略开仓失败 {symbol}\n{str(e)[:150]}")
+                self._notify(f"⚠️ 策略{'加仓' if add else '开仓'}失败 {symbol}\n{str(e)[:150]}")
                 return False
             filled = float(resp.get("executedQty") or 0)
             if filled <= 0:
@@ -279,25 +372,39 @@ class StrategyEngine:
                 return False
             entry = float(resp.get("avgPrice") or 0) or px
             qty = filled
-        else:
-            entry = px if bid > 0 else signal_price
 
-        pos = {
-            "symbol": symbol, "qty": qty, "entry": entry,
-            "opened": time.time(), "mode": self.mode,
-            "peak": 0.0, "detail": detail,
-        }
-        self.positions[symbol] = pos
-        self.stats["opens"] += 1
-        self._record("open", symbol=symbol, qty=qty, entry=entry,
-                     notional=round(qty * entry, 4), mode=self.mode,
-                     signal=detail)
-        log(f"OPEN   {symbol:12s} SHORT {qty:g} @ {entry:g} "
-            f"({qty * entry:.2f}U) TP{self.trade.get('tp_pct')}% "
-            f"SL{self.trade.get('sl_pct')}%")
-        self._notify(f"🔻 策略开空 {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
-                     f"放量 {detail.get('vol_ratio')}x  TR {detail.get('tr_ratio')}x  "
-                     f"上影 {detail.get('upper_ratio', 0) * 100:.0f}%")
+        pos = self.positions.get(symbol)
+        if pos is None:
+            pos = {"symbol": symbol, "mode": self.mode, "entries": [], "qty": 0.0,
+                   "avg": entry, "opened_at": time.time(), "peak": 0.0,
+                   "trail_on": False, "trail_level": 0.0, "tp_done": [False, False],
+                   "realized": 0.0, "parts": 0, "detail": detail}
+            self.positions[symbol] = pos
+        pos["entries"].append({"qty": qty, "price": entry, "ts": time.time()})
+        pos["qty"] = sum(e["qty"] for e in pos["entries"])
+        pos["avg"] = sum(e["qty"] * e["price"] for e in pos["entries"]) / pos["qty"]
+
+        if add:
+            self.stats["adds"] += 1
+            self._record("add", symbol=symbol, qty=qty, price=entry,
+                         avg=round(pos["avg"], 8), total_qty=pos["qty"],
+                         notional=round(pos["qty"] * pos["avg"], 4),
+                         entries=len(pos["entries"]), mode=self.mode, signal=detail)
+            log(f"ADD    {symbol:12s} SHORT {qty:g} @ {entry:g} "
+                f"→ 共 {pos['qty']:g} 均价 {pos['avg']:g}")
+            self._notify(f"➕ 策略加空 {symbol}\n{qty:g} @ {entry:g}\n"
+                         f"共 {pos['qty']:g} 均价 {pos['avg']:g}")
+        else:
+            self.stats["opens"] += 1
+            self._record("open", symbol=symbol, qty=qty, entry=entry,
+                         notional=round(qty * entry, 4), mode=self.mode, signal=detail)
+            log(f"OPEN   {symbol:12s} SHORT {qty:g} @ {entry:g} ({qty * entry:.2f}U) "
+                f"SL{self.trade.get('sl_pct')}% 阶梯 {ladder_of(self.trade)} "
+                f"追踪 {self.trade.get('trail_activate_pct')}/"
+                f"{self.trade.get('trail_gap_pct')}")
+            self._notify(f"🔻 策略开空 {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
+                         f"放量 {detail.get('vol_ratio')}x  TR {detail.get('tr_ratio')}x  "
+                         f"上影 {detail.get('upper_ratio', 0) * 100:.0f}%")
         return True
 
     def _ensure_leverage(self, symbol: str) -> None:
@@ -327,35 +434,69 @@ class StrategyEngine:
     def manage(self, prices: dict[str, float]) -> None:
         if not self.positions:
             return
-        tp = float(self.trade.get("tp_pct", 0.8) or 0.8)
         sl = float(self.trade.get("sl_pct", 0.5) or 0.5)
         max_hold = float(self.trade.get("max_hold_s", 180) or 180)
+        trail_act = float(self.trade.get("trail_activate_pct", 0) or 0)
+        trail_gap = float(self.trade.get("trail_gap_pct", 0) or 0)
+        ladder = ladder_of(self.trade)
         now = time.time()
         for symbol, pos in list(self.positions.items()):
             if self._past_cutoff():
-                self.close(symbol, "cutoff", prices.get(symbol) or pos["entry"])
+                self._close_partial(symbol, "cutoff",
+                                    prices.get(symbol) or pos["avg"], 1.0)
                 continue
             mark = float(prices.get(symbol) or 0)
             if mark <= 0:
                 continue
-            pnl_pct = (pos["entry"] - mark) / pos["entry"] * 100
-            if pnl_pct > pos["peak"]:
-                pos["peak"] = pnl_pct
-            if pnl_pct >= tp:
-                self.close(symbol, "take_profit", mark)
-            elif pnl_pct <= -sl:
-                self.close(symbol, "stop_loss", mark)
-            elif now - pos["opened"] >= max_hold:
-                self.close(symbol, "timeout", mark)
+            pnl = (pos["avg"] - mark) / pos["avg"] * 100
+            pos["peak"] = max(pos["peak"], pnl)
 
-    def close(self, symbol: str, reason: str, mark: float) -> None:
+            if pnl <= -sl:
+                self._close_partial(symbol, "stop_loss", mark, 1.0)
+                continue
+
+            acted = False
+            for idx, (level, frac) in enumerate(ladder):
+                if pos["tp_done"][idx] or pnl < level:
+                    continue
+                if self._close_partial(symbol, f"tp{idx + 1}", mark, frac):
+                    pos["tp_done"][idx] = True
+                acted = True
+                break
+            if acted:
+                continue
+
+            if trail_act > 0:
+                if not pos["trail_on"] and pnl >= trail_act:
+                    pos["trail_on"] = True
+                    pos["trail_level"] = pos["peak"] - trail_gap
+                    log(f"TRAIL  {symbol:12s} 追踪止盈开启：峰值 {pos['peak']:.2f}% "
+                        f"回撤 {trail_gap:g}pp → 触发线 {pos['trail_level']:.2f}%")
+                if pos["trail_on"]:
+                    # 峰值持续上移，触发线跟着上移（只上不下）
+                    pos["trail_level"] = max(pos["trail_level"], pos["peak"] - trail_gap)
+                    if pnl <= pos["trail_level"]:
+                        self._close_partial(symbol, "trail", mark, 1.0)
+                        continue
+
+            if now - pos["opened_at"] >= max_hold:
+                self._close_partial(symbol, "timeout", mark, 1.0)
+
+    def _close_partial(self, symbol: str, reason: str, mark: float,
+                       frac: float) -> bool:
         pos = self.positions.get(symbol)
         if not pos:
-            return
-        qty = pos["qty"]
-        entry = pos["entry"]
-        log(f"CLOSE? {symbol:12s} {reason} mark={mark:g} "
-            f"pnl≈{(entry - mark) / entry * 100:+.2f}%")
+            return False
+        remaining = float(pos["qty"])
+        flt = self._flt(symbol)
+        qty = remaining if frac >= 0.999 else self._floor_step(remaining * frac, flt["step"])
+        if qty <= 0:
+            qty = remaining
+        if remaining - qty < flt["step"] * 0.5:
+            qty = remaining                      # 不留碎单
+
+        log(f"CLOSE? {symbol:12s} {reason:8s} qty={qty:g}/{remaining:g} mark={mark:g} "
+            f"pnl≈{(pos['avg'] - mark) / pos['avg'] * 100:+.2f}%")
         exit_price = mark
         if pos["mode"] == "live":
             bid, ask = self._book(symbol)
@@ -372,33 +513,51 @@ class StrategyEngine:
                     self._reject(symbol, "close_failed",
                                  f"平仓未成交 status={resp.get('status')}")
                     self._notify(f"🚨 策略平仓失败 {symbol}，请手动处理")
-                    return
+                    return False
                 exit_price = float(resp.get("avgPrice") or 0) or px
                 qty = filled
             except Exception as e:  # noqa: BLE001
                 self._reject(symbol, "close_failed", str(e)[:160])
                 self._notify(f"🚨 策略平仓失败 {symbol}\n{str(e)[:150]}")
-                return
+                return False
 
-        pnl = (entry - exit_price) * qty
-        held = time.time() - pos["opened"]
+        pnl = (pos["avg"] - exit_price) * qty
+        pos["qty"] = max(0.0, remaining - qty)
+        pos["realized"] += pnl
+        pos["parts"] += 1
         self.realized_today += pnl
-        self.stats["closes"] += 1
         self.stats["pnl"] += pnl
-        if pnl > 0:
-            self.stats["wins"] += 1
+
+        self._record("close_partial", symbol=symbol, reason=reason, qty=qty,
+                     entry=round(pos["avg"], 8), exit=exit_price,
+                     pnl=round(pnl, 4),
+                     pnl_pct=round((pos["avg"] - exit_price) / pos["avg"] * 100, 3),
+                     remaining=round(pos["qty"], 8), mode=pos["mode"])
+        log(f"PART   {symbol:12s} {reason:8s} {qty:g} @ {exit_price:g} "
+            f"pnl={pnl:+.3f}U 剩余 {pos['qty']:g} 今日 {self.realized_today:+.2f}U")
+
+        if pos["qty"] <= 1e-12:
+            self._finalize(symbol, pos, reason)
+        return True
+
+    def _finalize(self, symbol: str, pos: dict, reason: str) -> None:
+        held = time.time() - pos["opened_at"]
+        total = pos["realized"]
         self.positions.pop(symbol, None)
         self._cooldown[symbol] = time.time()
-        self._record("close", symbol=symbol, reason=reason, qty=qty,
-                     entry=entry, exit=exit_price, pnl=round(pnl, 4),
-                     pnl_pct=round((entry - exit_price) / entry * 100, 3),
-                     held_s=round(held, 1), peak_pct=round(pos.get("peak", 0), 3),
+        self.stats["closes"] += 1
+        if total > 0:
+            self.stats["wins"] += 1
+        # 每一笔平仓都已按 close_partial 记账，这里 pnl 恒为 0，避免重启后重复累加
+        self._record("close", symbol=symbol, reason=reason, pnl=0.0,
+                     pnl_total=round(total, 4), parts=pos["parts"],
+                     entries=len(pos["entries"]), avg=round(pos["avg"], 8),
+                     held_s=round(held, 1), peak_pct=round(pos["peak"], 3),
                      mode=pos["mode"])
-        log(f"CLOSE  {symbol:12s} {reason:12s} {qty:g} @ {exit_price:g} "
-            f"pnl={pnl:+.3f}U ({held:.0f}s) 今日 {self.realized_today:+.2f}U")
-        self._notify(f"{'✅' if pnl >= 0 else '❌'} 策略平空 {symbol} {reason}\n"
-                     f"{qty:g} @ {exit_price:g}\n"
-                     f"盈亏 {pnl:+.3f}U（{held:.0f}s）")
+        log(f"CLOSE  {symbol:12s} {reason:10s} 合计 pnl={total:+.3f}U "
+            f"({held:.0f}s, {pos['parts']} 笔) 今日 {self.realized_today:+.2f}U")
+        self._notify(f"{'✅' if total >= 0 else '❌'} 策略平空 {symbol}（{reason}）\n"
+                     f"合计 {total:+.3f}U（{held:.0f}s，{pos['parts']} 笔）")
         self._check_halt()
 
     def _check_halt(self) -> None:
@@ -410,10 +569,12 @@ class StrategyEngine:
 
     def close_all(self, prices: dict[str, float], reason: str = "shutdown") -> None:
         for symbol in list(self.positions):
-            self.close(symbol, reason, prices.get(symbol) or self.positions[symbol]["entry"])
+            self._close_partial(symbol, reason,
+                                prices.get(symbol) or self.positions[symbol]["avg"], 1.0)
 
     def summary(self) -> str:
         s = self.stats
         wr = (s["wins"] / s["closes"] * 100) if s["closes"] else 0.0
-        return (f"信号 {s['signals']}  开仓 {s['opens']}  平仓 {s['closes']}  "
-                f"胜率 {wr:.0f}%  今日 {self.realized_today:+.2f}U  拒绝 {s['rejects']}")
+        return (f"信号 {s['signals']}  开仓 {s['opens']}  加仓 {s['adds']}  "
+                f"平仓 {s['closes']}  胜率 {wr:.0f}%  "
+                f"今日 {self.realized_today:+.2f}U  拒绝 {s['rejects']}")

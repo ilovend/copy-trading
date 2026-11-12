@@ -1083,7 +1083,6 @@ class App:
                   ("冷却根数", "signal.cooldown_bars"))),
         ("交易与风控", (("单笔名义 (U)", "trade.notional"),
                   ("最多同时持仓", "trade.max_positions"),
-                  ("止盈 %", "trade.tp_pct"),
                   ("止损 %", "trade.sl_pct"),
                   ("最长持仓 (秒)", "trade.max_hold_s"),
                   ("当日亏损上限 (U)", "trade.max_daily_loss"),
@@ -1091,6 +1090,15 @@ class App:
                   ("杠杆", "trade.leverage"),
                   ("IOC 缓冲 %", "trade.ioc_buffer_pct"),
                   ("强平时间 HH:MM", "trade.cutoff"))),
+        ("加仓与分批止盈", (("加仓窗口 (秒)", "trade.add_window_s"),
+                  ("最多加仓次数", "trade.max_adds"),
+                  ("加仓最小涨幅 %", "trade.add_min_gain_pct"),
+                  ("止盈1 触发 %", "trade.tp1_pct"),
+                  ("止盈1 平仓比例", "trade.tp1_frac"),
+                  ("止盈2 触发 %", "trade.tp2_pct"),
+                  ("止盈2 平仓比例", "trade.tp2_frac"),
+                  ("追踪启动 %", "trade.trail_activate_pct"),
+                  ("追踪回撤 pp", "trade.trail_gap_pct"))),
     )
 
     @staticmethod
@@ -1111,6 +1119,7 @@ class App:
     def _build_strategy(self, parent: ttk.Frame) -> None:
         cfg = SC.load()
         parent = self._scroll_area(parent)
+        self.sg_canvas = parent._canvas
         self.sg_vars: dict[str, tk.StringVar] = {}
 
         ttk.Label(parent, text="自研策略", style="Section.TLabel").pack(anchor="w")
@@ -1157,6 +1166,11 @@ class App:
             value=bool((cfg.get("trade") or {}).get("manage_leverage")))
         ttk.Checkbutton(parent, text="下单前设置该币杠杆（会改账户全局设置）",
                         variable=self.var_sg_lev).pack(anchor="w", pady=(8, 0))
+        ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
+            "止盈比例按「平掉当时剩余仓位的百分比」算：先平 50%，再平剩余的一半（累计 75%），"
+            "剩下 25% 交给追踪止盈。加仓只在首笔后 add_window_s 内、最多 max_adds 次，"
+            "且新信号价不低于上一笔（做空，越往上加越划算）。"
+        )).pack(anchor="w", pady=(6, 0))
 
         btns = ttk.Frame(parent)
         btns.pack(fill="x", pady=(12, 0))
