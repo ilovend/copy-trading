@@ -135,9 +135,17 @@ def main() -> None:
     hold_bars = max(1, round(hold_ms / 60000))
 
     syms = scan_universe(cfg)[: args.symbols]
-    warm = max(60, (int(sig.get("htf_lookback", 12)) + 2)
-               * int(sig.get("htf_minutes", 15)) if sig.get("htf_enabled") else 60)
-    print(f"预设 {args.preset} · {len(syms)} 个币 · 各 {args.bars} 根 1m · "
+    setup = cfg.get("setup") or {}
+    if setup.get("enabled"):
+        warm = max(60, (int(setup.get("lookback", 12)) + 2)
+                   * int(setup.get("htf_minutes", 30)))
+        mode_txt = (f"两段式 {setup.get('htf_minutes')}m→1m 放量"
+                    f"{setup.get('trig_vol_mult')}x")
+    else:
+        warm = max(60, (int(sig.get("htf_lookback", 12)) + 2)
+                   * int(sig.get("htf_minutes", 15)) if sig.get("htf_enabled") else 60)
+        mode_txt = "单根形态"
+    print(f"预设 {args.preset} · {mode_txt} · {len(syms)} 个币 · 各 {args.bars} 根 1m · "
           f"TP{tp}% SL{sl}% 持仓≤{hold_ms / 1000:.0f}s · 预热 {warm} 根\n")
 
     rows = []
@@ -148,8 +156,12 @@ def main() -> None:
             print(f"{sym:12s} K 线失败: {e}")
             continue
         sig_count = 0
+        stage = SP.TwoStage(setup) if setup.get("enabled") else None
         for i in range(warm, len(bars) - 1):
-            if not SP.evaluate(bars[:i + 1], sig)["hit"]:
+            if stage is not None:
+                if not stage.on_bar(bars[:i + 1]):
+                    continue
+            elif not SP.evaluate(bars[:i + 1], sig)["hit"]:
                 continue
             sig_count += 1
             entry = float(bars[i]["c"])

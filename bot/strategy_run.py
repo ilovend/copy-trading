@@ -93,6 +93,8 @@ class Runner:
         self._stop = threading.Event()
         self._reconnect = threading.Event()
         self._last_summary = 0.0
+        self.setup_cfg = cfg.get("setup") or {}
+        self.stages: dict[str, SP.TwoStage] = {}
 
     # ------------------------------------------------------------- 数据准备
     def prefill(self, symbols: list[str]) -> None:
@@ -126,13 +128,25 @@ class Runner:
                 bars = list(self.bars.get(symbol) or [])
                 if not bars or bars[-1].get("t") != bar["t"]:
                     continue
-                res = SP.evaluate(bars, self.cfg.get("signal") or {})
-                if not res["hit"]:
+                sig = None
+                if self.setup_cfg.get("enabled"):
+                    stage = self.stages.get(symbol)
+                    if stage is None:
+                        stage = SP.TwoStage(self.setup_cfg)
+                        self.stages[symbol] = stage
+                    sig = stage.on_bar(bars)
+                else:
+                    res = SP.evaluate(bars, self.cfg.get("signal") or {})
+                    if res["hit"]:
+                        sig = res["detail"]
+                if not sig:
                     continue
-                log(f"信号   {symbol:12s} 放量 {res['detail']['vol_ratio']}x "
-                    f"TR {res['detail']['tr_ratio']}x 上影 "
-                    f"{res['detail']['upper_ratio'] * 100:.0f}%")
-                self.engine.open_short(symbol, res["detail"], bar["c"])
+                setup = sig.get("setup") or {}
+                log(f"信号   {symbol:12s} 放量 {sig.get('vol_ratio')}x "
+                    f"上影 {(sig.get('upper_ratio') or 0) * 100:.0f}% "
+                    f"预备 {setup.get('bars', '-')} 根HTF 位置 {setup.get('pos', '-')} "
+                    f"偏离 {setup.get('ext_atr', '-')}ATR")
+                self.engine.open_short(symbol, sig, bar["c"])
             except Exception as e:  # noqa: BLE001
                 log(f"信号处理异常: {e}")
 
@@ -298,16 +312,23 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
     from strategy_engine import ladder_of
     trade = cfg.get("trade") or {}
     sig = cfg.get("signal") or {}
+    setup = cfg.get("setup") or {}
     bar_s = INTERVAL_S.get(cfg.get("interval", "1m"), 60)
     hold_bars = max(1, int(round(float(trade.get("max_hold_s", 180) or 180) / bar_s)))
-    warm = max(60, (int(sig.get("htf_lookback", 12)) + 2) * int(sig.get("htf_minutes", 15))
-               if sig.get("htf_enabled") else 60)
+    if setup.get("enabled"):
+        warm = max(60, (int(setup.get("lookback", 12)) + 2) * int(setup.get("htf_minutes", 30)))
+    else:
+        warm = max(60, (int(sig.get("htf_lookback", 12)) + 2) * int(sig.get("htf_minutes", 15))
+                   if sig.get("htf_enabled") else 60)
+    mode_txt = (f"两段式 {setup.get('htf_minutes')}m→1m 放量{setup.get('trig_vol_mult')}x"
+                f"（预备 {setup.get('arm_bars')} 根有效）" if setup.get("enabled") else
+                f"单根形态 HTF {'开' if sig.get('htf_enabled') else '关'} "
+                f"{sig.get('htf_minutes')}m/{sig.get('htf_high_zone')}/{sig.get('htf_ext_atr')}ATR")
     print(f"回放 {len(syms)} 个币 × 最近 {bars_per_symbol} 根 "
           f"{cfg.get('interval')}（预热 {warm} 根）\n"
+          f"  信号：{mode_txt}\n"
           f"  止损 {trade.get('sl_pct')}% · 阶梯 {ladder_of(trade)} · "
           f"追踪 {trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp · "
-          f"HTF {'开' if sig.get('htf_enabled') else '关'} "
-          f"{sig.get('htf_minutes')}m/{sig.get('htf_high_zone')}/{sig.get('htf_ext_atr')}ATR · "
           f"最长 {hold_bars} 根（不含加仓）\n")
     total = wins = 0
     pnls: list[float] = []
@@ -319,8 +340,12 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
             continue
         hits = 0
         sym_pnl = 0.0
+        stage = SP.TwoStage(setup) if setup.get("enabled") else None
         for i in range(warm, len(bars) - 1):
-            if not SP.evaluate(bars[:i + 1], cfg.get("signal") or {})["hit"]:
+            if stage is not None:
+                if not stage.on_bar(bars[:i + 1]):
+                    continue
+            elif not SP.evaluate(bars[:i + 1], sig)["hit"]:
                 continue
             hits += 1
             pnl, _how, _held = simulate_exit(bars, i, trade, bar_s)

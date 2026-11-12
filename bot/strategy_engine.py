@@ -402,9 +402,10 @@ class StrategyEngine:
                 f"SL{self.trade.get('sl_pct')}% 阶梯 {ladder_of(self.trade)} "
                 f"追踪 {self.trade.get('trail_activate_pct')}/"
                 f"{self.trade.get('trail_gap_pct')}")
+            tr_txt = f"TR {detail['tr_ratio']}x  " if detail.get("tr_ratio") else ""
             self._notify(f"🔻 策略开空 {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
-                         f"放量 {detail.get('vol_ratio')}x  TR {detail.get('tr_ratio')}x  "
-                         f"上影 {detail.get('upper_ratio', 0) * 100:.0f}%")
+                         f"放量 {detail.get('vol_ratio')}x  {tr_txt}"
+                         f"上影 {(detail.get('upper_ratio') or 0) * 100:.0f}%")
         return True
 
     def _ensure_leverage(self, symbol: str) -> None:

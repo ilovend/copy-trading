@@ -187,3 +187,122 @@ def detect(bars: Iterable[dict], cfg: dict) -> dict | None:
     bars = list(bars)
     res = evaluate(bars, cfg)
     return res["detail"] if res["hit"] else None
+
+
+# --------------------------------------------------------------- 两段式信号
+def _ema(values: Sequence[float], n: int) -> float:
+    if not values:
+        return 0.0
+    k = 2.0 / (n + 1)
+    e = values[0]
+    for v in values[1:]:
+        e = v * k + e * (1 - k)
+    return e
+
+
+def _atr(bars: Sequence[dict], n: int = 14) -> float:
+    if len(bars) < 2:
+        return 0.0
+    trs = []
+    for j in range(max(1, len(bars) - n), len(bars)):
+        trs.append(_true_range(bars[j], float(bars[j - 1]["c"])))
+    return sum(trs) / len(trs) if trs else 0.0
+
+
+def setup_of(bars_1m: Sequence[dict], cfg: dict) -> dict | None:
+    """30m（可调）收盘时判断：这根长周期 K 线是否值得「预备」。
+
+    条件：收盘站上最近 lookback 根 HTF 区间的高位，且相对 HTF 均线明显偏离。
+    """
+    minutes = int(cfg.get("htf_minutes", 30) or 30)
+    lookback = int(cfg.get("lookback", 12) or 12)
+    ema_n = int(cfg.get("ema", 12) or 12)
+    htf = aggregate_htf(bars_1m, minutes)
+    if len(htf) < max(lookback, ema_n) + 2:
+        return None
+    recent = htf[-lookback:]
+    hi = max(b["h"] for b in recent)
+    lo = min(b["l"] for b in recent)
+    rng = hi - lo
+    if rng <= 0:
+        return None
+    atr = _atr(htf, 14)
+    if atr <= 0:
+        return None
+    ema = _ema([b["c"] for b in htf], ema_n)
+    last = htf[-1]
+    pos = (float(last["h"]) - lo) / rng
+    ext = (float(last["c"]) - ema) / atr
+    detail = {"pos": round(pos, 3), "ext_atr": round(ext, 2),
+              "range_high": hi, "range_low": lo,
+              "close": float(last["c"]), "high": float(last["h"]),
+              "atr": atr, "bars": len(htf)}
+    if pos >= float(cfg.get("high_zone", 0.8)) and ext >= float(cfg.get("ext_atr", 1.0)):
+        return detail
+    return None
+
+
+def trigger_of(bars_1m: Sequence[dict], cfg: dict, armed: dict) -> dict | None:
+    """1m 收盘：急剧放量 + 价格还没跌离预备位太远（做空）。"""
+    last = bars_1m[-1]
+    o, h, l, c, v = (float(last["o"]), float(last["h"]), float(last["l"]),
+                     float(last["c"]), float(last["v"]))
+    window = min(60, len(bars_1m) - 1)
+    base = _median([float(b["v"]) for b in bars_1m[-1 - window:-1]])
+    vol_r = v / base if base > 0 else 0.0
+    if vol_r < float(cfg.get("trig_vol_mult", 3.0)):
+        return None
+    high = float(armed.get("high") or 0)
+    if high > 0:
+        drop = (high - c) / high * 100
+        if drop > float(cfg.get("trig_max_drop_pct", 0.5)):
+            return None
+    if cfg.get("trig_bearish", True) and c >= o:
+        return None
+    rng = h - l
+    upper = (h - max(o, c)) / rng if rng > 0 else 0.0
+    return {"vol_ratio": round(vol_r, 2),
+            "upper_ratio": round(upper, 3),
+            "close": c, "high": h,
+            "body_ratio": round(abs(c - o) / rng, 3) if rng > 0 else 0.0,
+            "drop_from_setup_pct": round((high - c) / high * 100, 2) if high else 0.0}
+
+
+class TwoStage:
+    """两段式：长周期收盘判「预备」，短周期放量才触发，预备有有效期。"""
+
+    def __init__(self, cfg: dict) -> None:
+        self.cfg = cfg
+        self.bucket: int | None = None
+        self.armed: dict | None = None
+
+    def on_bar(self, bars_1m: Sequence[dict]) -> dict | None:
+        if not bars_1m:
+            return None
+        last = bars_1m[-1]
+        minutes = int(self.cfg.get("htf_minutes", 30) or 30)
+        bucket = int(last["t"]) // (minutes * 60_000)
+
+        # 跨进新的 HTF 桶 = 上一根 HTF 刚收盘 → 重新评估预备
+        if self.bucket is not None and bucket != self.bucket:
+            info = setup_of(bars_1m, self.cfg)
+            if info:
+                arm_bars = int(self.cfg.get("arm_bars", 2) or 2)
+                self.armed = {"until": int(last["t"]) + arm_bars * minutes * 60_000,
+                              "high": info["high"], "close": info["close"],
+                              "setup": info, "at": int(last["t"])}
+        self.bucket = bucket
+
+        if self.armed is None:
+            return None
+        if int(last["t"]) > int(self.armed["until"]):
+            self.armed = None
+            return None
+        trg = trigger_of(bars_1m, self.cfg, self.armed)
+        if not trg:
+            return None
+        out = dict(trg)
+        out["setup"] = self.armed["setup"]
+        out["armed_for_s"] = round((int(last["t"]) - self.armed["at"]) / 1000)
+        self.armed = None
+        return out

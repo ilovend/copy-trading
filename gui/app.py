@@ -1105,6 +1105,14 @@ class App:
                   ("止盈2 平仓比例", "trade.tp2_frac"),
                   ("追踪启动 %", "trade.trail_activate_pct"),
                   ("追踪回撤 pp", "trade.trail_gap_pct"))),
+        ("两段式：长周期预备 → 短周期放量", (
+                  ("预备周期 (分钟)", "setup.htf_minutes"),
+                  ("区间回看根数", "setup.lookback"),
+                  ("预备高位阈值", "setup.high_zone"),
+                  ("预备偏离 ATR", "setup.ext_atr"),
+                  ("预备有效根数", "setup.arm_bars"),
+                  ("触发放量倍数", "setup.trig_vol_mult"),
+                  ("允许跌离 %", "setup.trig_max_drop_pct"))),
     )
 
     @staticmethod
@@ -1131,18 +1139,21 @@ class App:
         self.var_sg_push.set(bool(cfg.get("push", True)))
         self.var_sg_lev.set(bool((cfg.get("trade") or {}).get("manage_leverage")))
         self.var_sg_htf.set(bool((cfg.get("signal") or {}).get("htf_enabled", True)))
+        self.var_sg_setup.set(bool((cfg.get("setup") or {}).get("enabled", False)))
+        self.var_sg_trig_bear.set(bool((cfg.get("setup") or {}).get("trig_bearish", True)))
         for key, var in self.sg_vars.items():
             var.set(self._sg_fmt(self._sg_get(cfg, key)))
 
     def load_strategy_preset(self) -> None:
         name = self._preset_labels.get(self.cb_sg_preset.get(), "scalp")
-        cfg = SC.apply_preset(SC.load(), name)
-        self._sg_fill(cfg)
+        self.sg_cfg = SC.apply_preset(SC.load(), name)
+        self._sg_fill(self.sg_cfg)
         self._append(f"已载入预设「{self.cb_sg_preset.get()}」，"
                      f"点「保存参数」或「启动」后生效", "info", self.slog)
 
     def _build_strategy(self, parent: ttk.Frame) -> None:
         cfg = SC.load()
+        self.sg_cfg = cfg                  # 保存时基于它，避免丢掉非界面字段
         parent = self._scroll_area(parent)
         self.sg_canvas = parent._canvas
         self.sg_vars: dict[str, tk.StringVar] = {}
@@ -1210,6 +1221,12 @@ class App:
         self.var_sg_htf = tk.BooleanVar()
         ttk.Checkbutton(parent, text="启用长周期位置过滤（HTF 高位 + 偏离均线才做空）",
                         variable=self.var_sg_htf).pack(anchor="w", pady=(4, 0))
+        self.var_sg_setup = tk.BooleanVar()
+        ttk.Checkbutton(parent, text="启用两段式（覆盖上面的单根形态：长周期预备 → 短周期放量才打）",
+                        variable=self.var_sg_setup).pack(anchor="w", pady=(4, 0))
+        self.var_sg_trig_bear = tk.BooleanVar()
+        ttk.Checkbutton(parent, text="触发根要求收阴（否则纯放量即可触发）",
+                        variable=self.var_sg_trig_bear).pack(anchor="w", pady=(4, 0))
         ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
             "HTF 位置由 1m 聚合得到：要求信号那根的高点落在 HTF 区间的「高位阈值」以上"
             "（1.0 = 正好是区间最高），且收盘价相对 HTF 均线至少偏离「HTF 偏离 ATR」个 ATR。"
@@ -1245,12 +1262,14 @@ class App:
         self.root.after(200, lambda: parent._canvas.yview_moveto(0))
 
     def save_strategy_cfg(self) -> bool:
-        cfg = SC.load()
+        cfg = self.sg_cfg if getattr(self, "sg_cfg", None) else SC.load()
         cfg["mode"] = self._sg_mode_labels.get(self.cb_sg_mode.get(), "shadow")
         cfg["interval"] = self.cb_sg_interval.get() or "1m"
         cfg["push"] = bool(self.var_sg_push.get())
         cfg.setdefault("trade", {})["manage_leverage"] = bool(self.var_sg_lev.get())
         cfg.setdefault("signal", {})["htf_enabled"] = bool(self.var_sg_htf.get())
+        cfg.setdefault("setup", {})["enabled"] = bool(self.var_sg_setup.get())
+        cfg.setdefault("setup", {})["trig_bearish"] = bool(self.var_sg_trig_bear.get())
         for key, var in self.sg_vars.items():
             raw = var.get().strip()
             default = self._sg_get(SC.DEFAULTS, key)
