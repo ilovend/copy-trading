@@ -87,7 +87,8 @@ def simulate_exit(bars: list[dict], start: int, trade: dict,
             elif trail_on:
                 trail_level = max(trail_level, peak - trail_gap)
             if trail_on and pnl_close <= trail_level:
-                realized += trail_level * remaining
+                # 触发线只是「该走了」，实际成交用收盘价（更保守，避免高估）
+                realized += min(trail_level, pnl_close) * remaining
                 return realized, "trail", held
     last = float(bars[min(start + hold_bars, len(bars) - 1)]["c"])
     realized += (entry - last) / entry * 100 * remaining

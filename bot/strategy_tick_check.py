@@ -34,7 +34,7 @@ import strategy_volume_pinbar as SP  # noqa: E402
 
 FAPI = "https://fapi.binance.com"
 FEE = 0.10          # 往返 taker 手续费，%
-PAUSE = 0.2         # 请求间隔，避免打到 -1003 限频
+PAUSE = 0.6         # 请求间隔，避免打到 -1003 限频
 
 
 def get_list(path: str, timeout: int = 20, tries: int = 6) -> list:
@@ -99,16 +99,30 @@ def fetch_agg(symbol: str, start_ms: int, end_ms: int) -> list[dict]:
     return [r for r in out if start_ms <= int(r["T"]) <= end_ms]
 
 
-def sim_tick(trades: list[dict], entry: float, tp: float, sl: float) -> tuple[float, str]:
-    """按逐笔顺序判断：先到哪个算哪个。entry 用信号 K 线收盘价。"""
-    tp_px = entry * (1 - tp / 100)
+def sim_tick(trades: list[dict], entry: float, tp: float, sl: float,
+             trail_act: float = 0.0, trail_gap: float = 0.0) -> tuple[float, str]:
+    """按逐笔顺序判断：先到哪个算哪个。trail_act>0 时用追踪止盈代替固定止盈。"""
+    tp_px = entry * (1 - tp / 100) if tp > 0 else 0.0
     sl_px = entry * (1 + sl / 100)
+    peak = 0.0
+    trail_on = False
+    level = 0.0
     for t in trades:
         p = float(t["p"])
+        pnl = (entry - p) / entry * 100
         if p >= sl_px:
-            return -(p / entry - 1) * 100, "stop_loss"
-        if p <= tp_px:
-            return (1 - p / entry) * 100, "take_profit"
+            return pnl, "stop_loss"
+        if tp_px and p <= tp_px:
+            return pnl, "take_profit"
+        if trail_act > 0:
+            peak = max(peak, pnl)
+            if not trail_on and peak >= trail_act:
+                trail_on = True
+                level = peak - trail_gap
+            elif trail_on:
+                level = max(level, peak - trail_gap)
+            if trail_on and pnl <= level:
+                return pnl, "trail"
     if trades:
         last = float(trades[-1]["p"])
         return (1 - last / entry) * 100, "timeout"
@@ -123,14 +137,22 @@ def main() -> None:
     ap.add_argument("--tp", type=float, default=0, help="覆盖止盈 %%（默认取预设）")
     ap.add_argument("--sl", type=float, default=0, help="覆盖止损 %%（默认取预设）")
     ap.add_argument("--hold", type=float, default=0, help="覆盖最长持仓秒数")
+    ap.add_argument("--trail-act", type=float, default=0,
+                    help="追踪止盈启动 %%（大于 0 时替代固定止盈）")
+    ap.add_argument("--trail-gap", type=float, default=0.1, help="追踪回撤 pp")
+    ap.add_argument("--max-signals", type=int, default=0, help="最多校验多少个信号（控请求量）")
     args = ap.parse_args()
 
     cfg = SC.apply_preset(SC.load(), args.preset)
     trade, sig = cfg["trade"], cfg["signal"]
-    tp = float(args.tp or trade.get("tp1_pct", 0.5))
+    trail_act = float(args.trail_act or 0)
+    trail_gap = float(args.trail_gap or 0.1)
+    tp = 0.0 if trail_act > 0 else float(args.tp or trade.get("tp1_pct", 0.5))
     sl = float(args.sl or trade.get("sl_pct", 0.3))
     hold_s = float(args.hold or trade.get("max_hold_s", 180))
-    trade = dict(trade, tp1_pct=tp, sl_pct=sl, max_hold_s=hold_s)
+    trade = dict(trade, tp1_pct=tp, sl_pct=sl, max_hold_s=hold_s,
+                 tp1_frac=(1.0 if tp > 0 else 0.0),
+                 trail_activate_pct=trail_act, trail_gap_pct=trail_gap)
     hold_ms = int(hold_s * 1000)
     hold_bars = max(1, round(hold_ms / 60000))
 
@@ -146,7 +168,8 @@ def main() -> None:
                    * int(sig.get("htf_minutes", 15)) if sig.get("htf_enabled") else 60)
         mode_txt = "单根形态"
     print(f"预设 {args.preset} · {mode_txt} · {len(syms)} 个币 · 各 {args.bars} 根 1m · "
-          f"TP{tp}% SL{sl}% 持仓≤{hold_ms / 1000:.0f}s · 预热 {warm} 根\n")
+          f"{'追踪 ' + str(trail_act) + '%/' + str(trail_gap) + 'pp' if trail_act else 'TP' + str(tp) + '%'}"
+          f" SL{sl}% 持仓≤{hold_ms / 1000:.0f}s · 预热 {warm} 根\n")
 
     rows = []
     for sym in syms:
@@ -167,10 +190,14 @@ def main() -> None:
             entry = float(bars[i]["c"])
             t0 = int(bars[i]["t"]) + 60_000
             trades = fetch_agg(sym, t0, t0 + hold_ms)
-            tick_pnl, tick_reason = sim_tick(trades, entry, tp, sl)
+            tick_pnl, tick_reason = sim_tick(trades, entry, tp, sl, trail_act, trail_gap)
             bar_pnl, bar_reason, _held = SE.simulate_exit(bars, i, trade, 60)
-            both = (max(float(b["h"]) for b in bars[i + 1:i + 1 + hold_bars]) >= entry * (1 + sl / 100)
-                    and min(float(b["l"]) for b in bars[i + 1:i + 1 + hold_bars]) <= entry * (1 - tp / 100))
+            both = False
+            if tp > 0:
+                both = (max(float(b["h"]) for b in bars[i + 1:i + 1 + hold_bars])
+                        >= entry * (1 + sl / 100)
+                        and min(float(b["l"]) for b in bars[i + 1:i + 1 + hold_bars])
+                        <= entry * (1 - tp / 100))
             rows.append({
                 "sym": sym, "t": bars[i]["t"], "entry": entry,
                 "bar_pnl": bar_pnl, "bar": bar_reason,
@@ -178,8 +205,13 @@ def main() -> None:
                 "trades": len(trades), "both": both,
                 "flip": (tick_reason != bar_reason),
             })
+            if args.max_signals and len(rows) >= args.max_signals:
+                break
         if sig_count:
             print(f"  {sym:12s} 信号 {sig_count}")
+        if args.max_signals and len(rows) >= args.max_signals:
+            print(f"  已达 --max-signals {args.max_signals}，停止")
+            break
 
     if not rows:
         print("\n样本内没有信号")
