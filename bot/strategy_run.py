@@ -101,6 +101,7 @@ class Runner:
         self._cutoff_logged = False
         self._last_status = 0.0
         self._rest_enabled = False
+        self._last_sig_t: dict[str, int] = {}
         self.setup_cfg = cfg.get("setup") or {}
         self.fade_cfg = cfg.get("fade") or {}
         self.stages: dict[str, SP.TwoStage] = {}
@@ -242,6 +243,17 @@ class Runner:
         except Exception:  # noqa: BLE001
             pass
 
+    def _feed_bar(self, symbol: str, bar: dict) -> None:
+        """只把「新收盘」的 K 线送进信号队列，避免同一根重复触发。"""
+        t = int(bar["t"])
+        if t <= int(self._last_sig_t.get(symbol, 0)):
+            return
+        self._last_sig_t[symbol] = t
+        try:
+            self.signals.put_nowait((symbol, bar))
+        except queue.Full:
+            log("信号队列已满，丢弃一根 K 线")
+
     # ------------------------------------------------------------- REST 兜底
     async def _rest_loop(self) -> None:
         """WS 收不到数据时（代理/网络问题），用 REST 轮询补 K 线与价格。"""
@@ -290,19 +302,13 @@ class Runner:
                            "closed": True}
                     if t == last_t and dq:
                         dq[-1] = bar          # 同一根从未收盘变收盘：就地更新
-                        try:
-                            self.signals.put_nowait((sym, bar))
-                        except queue.Full:
-                            pass
+                        self._feed_bar(sym, bar)
                         continue
                     if t <= last_t:
                         continue
                     dq.append(bar)
                     last_t = t
-                    try:
-                        self.signals.put_nowait((sym, bar))
-                    except queue.Full:
-                        pass
+                    self._feed_bar(sym, bar)
             await asyncio.sleep(float(self.cfg.get("rest_poll_s", 5) or 5))
 
     # ------------------------------------------------------------- WS
@@ -332,10 +338,7 @@ class Runner:
             dq[-1] = bar
         else:
             dq.append(bar)
-        try:
-            self.signals.put_nowait((symbol, bar))
-        except queue.Full:
-            log("信号队列已满，丢弃一根 K 线")
+        self._feed_bar(symbol, bar)
 
     async def _stream_loop(self) -> None:
         backoff = 1

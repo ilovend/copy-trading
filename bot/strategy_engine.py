@@ -777,8 +777,14 @@ class StrategyEngine:
             r = live.get(sym)
             amt = abs(float(r.get("positionAmt") or 0)) if r else 0
             if amt > 0:
+                self.positions[sym].pop("_miss", None)
                 continue
-            pos = self.positions.pop(sym)
+            pos = self.positions[sym]
+            pos["_miss"] = int(pos.get("_miss", 0)) + 1
+            if pos["_miss"] < 2:      # 刚成交时仓位接口可能延迟，再查一次
+                log(f"⚠ {sym} 暂时查不到持仓（{pos['_miss']}/2），10 秒后复查")
+                continue
+            self.positions.pop(sym)
             self._record("close", symbol=sym, reason="external", qty=0.0,
                          pnl_total=round(float(pos.get("realized") or 0), 6),
                          entries=len(pos.get("entries") or []),
