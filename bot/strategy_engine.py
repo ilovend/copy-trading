@@ -192,8 +192,11 @@ class StrategyEngine:
         return max(px, tick)
 
     # ------------------------------------------------------------- 风控闸门
-    def _cutoff_time(self) -> dtime:
-        raw = str(self.trade.get("cutoff") or "23:55")
+    def _cutoff_time(self) -> dtime | None:
+        """返回强平时间；返回 None 表示不设收盘（全天候）。"""
+        raw = str(self.trade.get("cutoff") or "").strip().lower()
+        if raw in ("", "off", "none", "0", "false", "全天"):
+            return None
         try:
             h, m = raw.split(":")
             return dtime(int(h), int(m))
@@ -201,11 +204,15 @@ class StrategyEngine:
             return dtime(23, 55)
 
     def _past_cutoff(self) -> bool:
-        return datetime.now().time() >= self._cutoff_time()
+        cutoff = self._cutoff_time()
+        return False if cutoff is None else datetime.now().time() >= cutoff
 
     def _near_cutoff(self) -> bool:
+        cutoff_t = self._cutoff_time()
+        if cutoff_t is None:
+            return False
         now = datetime.now()
-        cutoff = datetime.combine(now.date(), self._cutoff_time())
+        cutoff = datetime.combine(now.date(), cutoff_t)
         return (cutoff - now).total_seconds() <= float(self.trade.get("max_hold_s", 180))
 
     def _reset_daily(self) -> None:
