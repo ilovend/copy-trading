@@ -354,25 +354,43 @@ class StrategyEngine:
             return False
 
         px = self._ioc_price(symbol, "SELL", bid, ask, signal_price)
+        maker_entry = (self.mode == "live" and ask > 0
+                       and str(self.trade.get("entry_mode", "taker")) == "maker")
+        if maker_entry:
+            # 被动挂单要挂在卖一价（挂在买一价就等于吃单，算 taker）
+            px = max(self._tick_round(ask, flt["tick"]), flt["tick"])
         self._cooldown[symbol] = time.time()
         log(f"{'ADD ' if add else 'OPEN'}?  {symbol:12s} SHORT qty={qty:g} px={px:g} "
-            f"名义={qty * signal_price:.2f}U 模式={self.mode}")
+            f"名义={qty * signal_price:.2f}U 模式={self.mode}"
+            f"{' 被动挂单' if maker_entry else ''}")
 
         entry = px if bid > 0 else signal_price
         if self.mode == "live":
             try:
                 self._ensure_leverage(symbol)
-                resp = self._send(symbol, "SELL", qty, px, "SHORT")
+                if maker_entry:
+                    resp = self._send(symbol, "SELL", qty, px, "SHORT", tif="GTC")
+                    oid = resp.get("orderId")
+                    timeout = float(self.trade.get("entry_timeout_s", 5) or 5)
+                    filled, fill_px = self._await_fill(symbol, oid, timeout, px, qty)
+                    if filled <= 0:
+                        self._reject(symbol, "maker_unfilled",
+                                     f"被动挂单 {timeout:g}s 未成交，已撤单")
+                        return False
+                    entry = fill_px or px
+                    qty = filled
+                else:
+                    resp = self._send(symbol, "SELL", qty, px, "SHORT")
+                    filled = float(resp.get("executedQty") or 0)
+                    if filled <= 0:
+                        self._reject(symbol, "unfilled", f"status={resp.get('status')}")
+                        return False
+                    entry = float(resp.get("avgPrice") or 0) or px
+                    qty = filled
             except Exception as e:  # noqa: BLE001
                 self._reject(symbol, "order_failed", str(e)[:160])
                 self._notify(f"⚠️ 策略{'加仓' if add else '开仓'}失败 {symbol}\n{str(e)[:150]}")
                 return False
-            filled = float(resp.get("executedQty") or 0)
-            if filled <= 0:
-                self._reject(symbol, "unfilled", f"status={resp.get('status')}")
-                return False
-            entry = float(resp.get("avgPrice") or 0) or px
-            qty = filled
 
         pos = self.positions.get(symbol)
         if pos is None:
@@ -384,6 +402,8 @@ class StrategyEngine:
         pos["entries"].append({"qty": qty, "price": entry, "ts": time.time()})
         pos["qty"] = sum(e["qty"] for e in pos["entries"])
         pos["avg"] = sum(e["qty"] * e["price"] for e in pos["entries"]) / pos["qty"]
+        if self.mode == "live" and str(self.trade.get("tp_mode", "taker")) == "maker":
+            self._place_tp(symbol, pos)
 
         if add:
             self.stats["adds"] += 1
@@ -420,7 +440,8 @@ class StrategyEngine:
         self._lev_set.add(symbol)
 
     def _send(self, symbol: str, side: str, qty: float, px: float,
-              ps: str, reduce_only: bool = False, market: bool = False) -> dict:
+              ps: str, reduce_only: bool = False, market: bool = False,
+              tif: str = "IOC") -> dict:
         ex = self._ex_client()
         hedge = self._is_hedge()
         if market:
@@ -428,9 +449,94 @@ class StrategyEngine:
                             position_side=ps if hedge else None,
                             reduce_only=reduce_only and not hedge)
         return ex.order(symbol, side, qty, order_type="LIMIT", price=px,
-                        time_in_force="IOC",
+                        time_in_force=tif,
                         position_side=ps if hedge else None,
                         reduce_only=reduce_only and not hedge)
+
+    # ------------------------------------------------------- maker 挂单管理
+    def _await_fill(self, symbol: str, order_id, timeout_s: float,
+                    fallback_px: float, fallback_qty: float) -> tuple[float, float]:
+        """等被动挂单成交；超时撤单并把已成交的部分也算回来。"""
+        deadline = time.time() + max(timeout_s, 0.5)
+        while time.time() < deadline:
+            time.sleep(0.3)
+            st = self._order_status(symbol, order_id)
+            if st == "FILLED":
+                return self._filled_of(symbol, order_id) or (fallback_qty, fallback_px)
+            if st in ("CANCELED", "EXPIRED", "REJECTED"):
+                return 0.0, 0.0
+        try:
+            self._ex_client().cancel(symbol, order_id)
+        except Exception:  # noqa: BLE001
+            pass
+        filled = self._filled_of(symbol, order_id)
+        return filled if filled and filled[0] > 0 else (0.0, 0.0)
+
+    def _order_status(self, symbol: str, order_id) -> str:
+        if not order_id:
+            return ""
+        try:
+            o = self._ex_client().query_order(symbol, int(order_id))
+            return str(o.get("status") or "")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _filled_of(self, symbol: str, order_id) -> tuple[float, float] | None:
+        try:
+            o = self._ex_client().query_order(symbol, int(order_id))
+        except Exception:  # noqa: BLE001
+            return None
+        qty = float(o.get("executedQty") or 0)
+        if qty <= 0:
+            return None
+        px = float(o.get("avgPrice") or 0) or float(o.get("price") or 0)
+        return qty, px
+
+    def _place_tp(self, symbol: str, pos: dict) -> None:
+        """止盈挂被动限价单：价格到不了就一直挂着，到点或止损时撤掉。"""
+        tp = float(self.trade.get("tp1_pct", 0) or 0)
+        if tp <= 0 or pos.get("tp_order") or pos.get("qty", 0) <= 0:
+            return
+        px = self._tick_round(pos["avg"] * (1 - tp / 100), self._flt(symbol)["tick"])
+        try:
+            r = self._send(symbol, "BUY", pos["qty"], px, "SHORT",
+                           reduce_only=True, tif="GTC")
+            pos["tp_order"] = r.get("orderId")
+            pos["tp_price"] = px
+            log(f"TP挂单 {symbol:12s} BUY {pos['qty']:g} @ {px:g}（maker 等待成交）")
+        except Exception as e:  # noqa: BLE001
+            log(f"⚠ 止盈挂单失败 {symbol}: {e}（该仓改走 taker 止盈）")
+            pos["tp_order"] = None
+
+    def _cancel_tp(self, symbol: str, pos: dict) -> None:
+        oid = pos.pop("tp_order", None)
+        pos.pop("tp_price", None)
+        if not oid:
+            return
+        try:
+            self._ex_client().cancel(symbol, int(oid))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _settle_maker_tp(self, symbol: str, pos: dict) -> None:
+        """限价止盈单成交：落账并收尾。"""
+        qty = pos["qty"]
+        exit_price = float(pos.get("tp_price") or 0) or pos["avg"]
+        pnl = (pos["avg"] - exit_price) * qty
+        pos["qty"] = 0.0
+        pos["realized"] += pnl
+        pos["parts"] += 1
+        pos["tp_order"] = None
+        self.realized_today += pnl
+        self.stats["pnl"] += pnl
+        self._record("close_partial", symbol=symbol, reason="take_profit_maker",
+                     qty=qty, entry=round(pos["avg"], 8), exit=exit_price,
+                     pnl=round(pnl, 4),
+                     pnl_pct=round((pos["avg"] - exit_price) / pos["avg"] * 100, 3),
+                     remaining=0.0, mode=pos["mode"])
+        log(f"PART   {symbol:12s} tp(maker) {qty:g} @ {exit_price:g} "
+            f"pnl={pnl:+.3f}U 今日 {self.realized_today:+.2f}U")
+        self._finalize(symbol, pos, "take_profit_maker")
 
     # ------------------------------------------------------------- 持仓管理
     def manage(self, prices: dict[str, float]) -> None:
@@ -443,6 +549,14 @@ class StrategyEngine:
         ladder = ladder_of(self.trade)
         now = time.time()
         for symbol, pos in list(self.positions.items()):
+            if pos.get("tp_order"):
+                st = self._order_status(symbol, pos["tp_order"])
+                if st == "FILLED":
+                    self._settle_maker_tp(symbol, pos)
+                    continue
+                if st in ("CANCELED", "EXPIRED", "REJECTED"):
+                    pos["tp_order"] = None
+                    pos.pop("tp_price", None)
             if self._past_cutoff():
                 self._close_partial(symbol, "cutoff",
                                     prices.get(symbol) or pos["avg"], 1.0)
@@ -489,6 +603,8 @@ class StrategyEngine:
         pos = self.positions.get(symbol)
         if not pos:
             return False
+        if pos.get("tp_order"):
+            self._cancel_tp(symbol, pos)     # 主动平仓前先撤掉止盈挂单
         remaining = float(pos["qty"])
         flt = self._flt(symbol)
         qty = remaining if frac >= 0.999 else self._floor_step(remaining * frac, flt["step"])

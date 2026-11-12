@@ -216,6 +216,17 @@ class ExecClient:
                         {"symbol": symbol, "orderId": order_id},
                         key=self.key, secret=self.secret)
 
+    def query_order(self, symbol: str, order_id: int) -> dict:
+        """查单状态：NEW / PARTIALLY_FILLED / FILLED / CANCELED / EXPIRED。"""
+        return _request("GET", "/fapi/v1/order",
+                        {"symbol": symbol, "orderId": order_id},
+                        key=self.key, secret=self.secret)
+
+    def cancel_all(self, symbol: str) -> dict:
+        """撤掉该币全部挂单（策略停止/收盘清理用）。"""
+        return _request("DELETE", "/fapi/v1/allOpenOrders",
+                        {"symbol": symbol}, key=self.key, secret=self.secret)
+
     # ------------------------------------------------------------ test
     def test(self) -> dict:
         if not self.key or not self.secret:

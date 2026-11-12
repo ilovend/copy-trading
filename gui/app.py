@@ -1095,7 +1095,10 @@ class App:
                   ("滑点上限 %", "trade.max_slippage_pct"),
                   ("杠杆", "trade.leverage"),
                   ("IOC 缓冲 %", "trade.ioc_buffer_pct"),
-                  ("强平时间 HH:MM", "trade.cutoff"))),
+                  ("强平时间 HH:MM", "trade.cutoff"),
+                  ("入场方式", "trade.entry_mode"),
+                  ("入场等待 (秒)", "trade.entry_timeout_s"),
+                  ("止盈方式", "trade.tp_mode"))),
         ("加仓与分批止盈", (("加仓窗口 (秒)", "trade.add_window_s"),
                   ("最多加仓次数", "trade.max_adds"),
                   ("加仓最小涨幅 %", "trade.add_min_gain_pct"),
@@ -1208,9 +1211,12 @@ class App:
                 cell.grid(row=r, column=c, sticky="w", padx=(0, 26), pady=3)
                 ttk.Label(cell, text=label, width=18, style="Muted.TLabel").pack(side="left")
                 var = tk.StringVar()
-                if key == "universe.sort_by":
+                choices = {"universe.sort_by": ["change", "volume"],
+                           "trade.entry_mode": ["taker", "maker"],
+                           "trade.tp_mode": ["taker", "maker"]}.get(key)
+                if choices:
                     ttk.Combobox(cell, textvariable=var, width=13, state="readonly",
-                                 values=["change", "volume"]).pack(side="left")
+                                 values=choices).pack(side="left")
                 else:
                     ttk.Entry(cell, textvariable=var, width=15).pack(side="left")
                 self.sg_vars[key] = var
