@@ -3,7 +3,9 @@
 > 目的：币安改接口时往往**旧地址不报错、只是不返回数据**，排障极费时间。
 > 这里记录已验证的变更、失败表现和复验方法，升级出问题时先对照本表。
 >
-> 最近核验：2026-11-13（v1.10.1）
+> 最近核验：2026-11-13（v1.10.3）
+>
+> 快速自检：`python bot\ws_probe.py`（一次性测所有候选 WS 入口，看谁还活着）。
 
 ## 一、快速对照表
 
@@ -186,9 +188,27 @@ wss://fstream.binance.com/private/stream   （新路径）
 
 ## 七、排查顺序（下次再遇到「连上但没数据」）
 
-1. 先用**现货** WS 和一个**非币安** WS 对照，确认客户端/网络没问题；
-2. 用**合约测试网**对照，确认不是账号/地区限制；
-3. 用 DoH 拿真实 IP 直连，排除 fake-ip / 代理 DNS；
-4. 用 `/fapi/v1/order/test` 或 `/fapi/v1/algoOrder` 的错误码定位接口是否迁移
-   （`-4120` = 接口换了，`-4509` = 参数/持仓前提不满足）；
-5. 查本文件，再查币安官方「Change Log」。
+**第 0 步（最快，已经两次直接解决问题）**：打开 <https://www.binance.com> 合约页面
+→ F12 → Network → WS → 点开连接看 **Request URL**，把真实地址抄下来直接测。
+
+> 本项目已经踩过两次同一类坑：
+> 1. 跟单用户数据流：`/ws/<listenKey>` → `/private/stream`（握手正常、不推数据）
+> 2. 合约行情：`/ws/<stream>`、`/stream?streams=` → `/market/stream`
+>
+> 两次都是「连接成功」骗了人，所以**永远要数消息条数**。
+
+**第 1 步**：用自带探针对照，一条命令看清哪个入口活着：
+
+```bat
+python bot\ws_probe.py
+python bot\ws_probe.py --stream akeusdt@kline_1m
+python bot\ws_probe.py --url "wss://fstream.binance.com/market/stream?streams=btcusdt@kline_1m"
+```
+
+输出 `✅ N 条` 是可用，`❌ 0 条` 是「握手成功但不推」，`连接失败` 才是网络问题。
+
+**第 2 步**：现货 WS + 合约测试网对照，区分「客户端/网络」与「入口迁移」；
+**第 3 步**：DoH 拿真实 IP 直连，排除 fake-ip / 代理 DNS；
+**第 4 步**：用 `/fapi/v1/order/test` 或 `/fapi/v1/algoOrder` 的错误码定位接口是否迁移
+（`-4120` = 接口换了，`-4509` = 参数/持仓前提不满足）；
+**第 5 步**：查本文件，再查币安官方「Change Log」。
