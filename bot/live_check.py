@@ -62,7 +62,7 @@ def main() -> None:
     if not key or not secret:
         blockers.append("没有配置 EXEC_API_KEY / EXEC_API_SECRET（.env 或 GUI 复制页）")
         print("FAIL  密钥未配置")
-        _summary(blockers, warnings)
+        _summary(blockers, warnings, args.preset)
         return
     print(f"PASS  密钥已配置（{key[:6]}…{key[-4:]}）")
 
@@ -79,7 +79,7 @@ def main() -> None:
             blockers.append(f"权益 {equity:.2f}U 不够覆盖最大占用 {need:g}U 的 1.2 倍")
     except Exception as e:  # noqa: BLE001
         blockers.append(f"账户查询失败：{str(e)[:160]}")
-        _summary(blockers, warnings)
+        _summary(blockers, warnings, args.preset)
         return
 
     # 3) 持仓模式与现有持仓
@@ -98,11 +98,11 @@ def main() -> None:
         syms = RS.scan_universe(cfg)[: args.symbols]
     except Exception as e:  # noqa: BLE001
         blockers.append(f"候选池扫描失败：{str(e)[:160]}")
-        _summary(blockers, warnings)
+        _summary(blockers, warnings, args.preset)
         return
     if not syms:
         blockers.append("候选池为空（涨幅/成交额门槛可能太高）")
-        _summary(blockers, warnings)
+        _summary(blockers, warnings, args.preset)
         return
     print(f"\n候选币（{len(syms)}）：{', '.join(syms)}")
 
@@ -147,10 +147,10 @@ def main() -> None:
             blockers.append(f"{sym} 下单预检失败：{str(e)[:150]}")
             print(f"FAIL  {sym:12s} {str(e)[:150]}")
 
-    _summary(blockers, warnings)
+    _summary(blockers, warnings, args.preset)
 
 
-def _summary(blockers: list[str], warnings: list[str]) -> None:
+def _summary(blockers: list[str], warnings: list[str], preset: str) -> None:
     print()
     if warnings:
         print("WARN：")
@@ -162,7 +162,7 @@ def _summary(blockers: list[str], warnings: list[str]) -> None:
             print(f"  · {b}")
         sys.exit(1)
     print("\n✅ 预检通过。启动命令：")
-    print("   python bot\\strategy_run.py --preset fade_live")
+    print(f"   python bot\\strategy_run.py --preset {preset}")
     print("   （GUI：仓位复制页先停止复制，避免同币撞单；再到「自研策略」载入首跑预设）")
 
 
