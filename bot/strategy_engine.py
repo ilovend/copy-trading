@@ -108,6 +108,8 @@ class StrategyEngine:
         self._ex = None
         self._hedge: bool | None = None
         self._lev_set: set[str] = set()
+        self.basket = cfg.get("basket") or {}
+        self.basket_on = bool(self.basket.get("enabled"))
 
         self.positions: dict[str, dict] = {}
         self._cooldown: dict[str, float] = {}
@@ -397,7 +399,8 @@ class StrategyEngine:
             pos = {"symbol": symbol, "mode": self.mode, "entries": [], "qty": 0.0,
                    "avg": entry, "opened_at": time.time(), "peak": 0.0,
                    "trail_on": False, "trail_level": 0.0, "tp_done": [False, False],
-                   "realized": 0.0, "parts": 0, "detail": detail}
+                   "realized": 0.0, "parts": 0, "detail": detail,
+                   "last_add_pnl": 0.0}
             self.positions[symbol] = pos
         pos["entries"].append({"qty": qty, "price": entry, "ts": time.time()})
         pos["qty"] = sum(e["qty"] for e in pos["entries"])
@@ -564,6 +567,9 @@ class StrategyEngine:
             mark = float(prices.get(symbol) or 0)
             if mark <= 0:
                 continue
+            if self.basket_on:
+                self._manage_basket(symbol, pos, mark, now)
+                continue
             pnl = (pos["avg"] - mark) / pos["avg"] * 100
             pos["peak"] = max(pos["peak"], pnl)
 
@@ -597,6 +603,69 @@ class StrategyEngine:
 
             if now - pos["opened_at"] >= max_hold:
                 self._close_partial(symbol, "timeout", mark, 1.0)
+
+    # ------------------------------------------------------- 均价摊平（复刻）
+    def _manage_basket(self, symbol: str, pos: dict, mark: float, now: float) -> None:
+        """暴涨做空 + 逆行加仓 + 回均价止盈，带硬止损与时间止损。"""
+        b = self.basket
+        pnl = (pos["avg"] - mark) / pos["avg"] * 100
+        pos["peak"] = max(pos["peak"], pnl)
+        tp = float(b.get("basket_tp_pct", 0.5) or 0.5)
+        hard = float(b.get("hard_stop_pct", 6.0) or 6.0)
+        hold = float(b.get("max_hold_s", 3600) or 3600)
+        if pnl >= tp:
+            self._close_partial(symbol, "basket_tp", mark, 1.0)
+            return
+        if pnl <= -hard:
+            self._close_partial(symbol, "basket_stop", mark, 1.0)
+            return
+        if now - pos["opened_at"] >= hold:
+            self._close_partial(symbol, "basket_timeout", mark, 1.0)
+            return
+        step = float(b.get("add_step_pct", 1.26) or 1.26)
+        max_adds = int(b.get("max_adds", 3) or 0)
+        adds = len(pos["entries"]) - 1
+        last = float(pos.get("last_add_pnl", 0.0))
+        if adds < max_adds and (last - pnl) >= step:
+            self._basket_add(symbol, pos, mark, pnl)
+
+    def _basket_add(self, symbol: str, pos: dict, mark: float, pnl: float) -> None:
+        b = self.basket
+        notional = float(b.get("notional", self.trade.get("notional", 5)) or 5)
+        flt = self._flt(symbol)
+        qty = self._floor_step(notional / mark, flt["step"])
+        if qty <= 0:
+            return
+        bid, ask = self._book(symbol)
+        px = self._ioc_price(symbol, "SELL", bid, ask, mark)
+        log(f"ADD?   {symbol:12s} 逆行加仓 #{len(pos['entries'])} qty={qty:g} px={px:g}")
+        entry = px
+        if self.mode == "live":
+            try:
+                self._ensure_leverage(symbol)
+                resp = self._send(symbol, "SELL", qty, px, "SHORT")
+            except Exception as e:  # noqa: BLE001
+                log(f"⚠ 加仓失败 {symbol}: {e}")
+                return
+            filled = float(resp.get("executedQty") or 0)
+            if filled <= 0:
+                log(f"⚠ 加仓未成交 {symbol}")
+                return
+            qty = filled
+            entry = float(resp.get("avgPrice") or 0) or px
+        pos["entries"].append({"qty": qty, "price": entry, "ts": time.time()})
+        pos["qty"] = sum(e["qty"] for e in pos["entries"])
+        pos["avg"] = sum(e["qty"] * e["price"] for e in pos["entries"]) / pos["qty"]
+        pos["last_add_pnl"] = pnl
+        self.stats["adds"] += 1
+        self._record("add", symbol=symbol, qty=qty, price=entry,
+                     avg=round(pos["avg"], 8), total_qty=pos["qty"],
+                     notional=round(pos["qty"] * pos["avg"], 4),
+                     entries=len(pos["entries"]), mode=self.mode, reason="basket")
+        log(f"ADD    {symbol:12s} 共 {pos['qty']:g} 均价 {pos['avg']:g} "
+            f"（{len(pos['entries'])} 笔）")
+        self._notify(f"➕ 均价加空 {symbol}\n{qty:g} @ {entry:g}\n"
+                     f"共 {pos['qty']:g} 均价 {pos['avg']:g}")
 
     def _close_partial(self, symbol: str, reason: str, mark: float,
                        frac: float) -> bool:

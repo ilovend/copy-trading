@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT / "bot"))
 import websockets  # noqa: E402
 
 import strategy_volume_pinbar as SP  # noqa: E402
+import strategy_fade as SF  # noqa: E402
 from strategy_config import load as load_cfg  # noqa: E402
 from strategy_engine import (INTERVAL_S, StrategyEngine, ladder_of, log,  # noqa: E402
                              simulate_exit)
@@ -94,6 +95,7 @@ class Runner:
         self._reconnect = threading.Event()
         self._last_summary = 0.0
         self.setup_cfg = cfg.get("setup") or {}
+        self.fade_cfg = cfg.get("fade") or {}
         self.stages: dict[str, SP.TwoStage] = {}
 
     # ------------------------------------------------------------- 数据准备
@@ -129,7 +131,11 @@ class Runner:
                 if not bars or bars[-1].get("t") != bar["t"]:
                     continue
                 sig = None
-                if self.setup_cfg.get("enabled"):
+                if self.fade_cfg.get("enabled"):
+                    # 已有仓位时不重复开首仓（加仓由引擎按逆行触发）
+                    if symbol not in self.engine.positions:
+                        sig = SF.fade_signal(bars, self.fade_cfg)
+                elif self.setup_cfg.get("enabled"):
                     stage = self.stages.get(symbol)
                     if stage is None:
                         stage = SP.TwoStage(self.setup_cfg)
@@ -141,11 +147,15 @@ class Runner:
                         sig = res["detail"]
                 if not sig:
                     continue
-                setup = sig.get("setup") or {}
-                log(f"信号   {symbol:12s} 放量 {sig.get('vol_ratio')}x "
-                    f"上影 {(sig.get('upper_ratio') or 0) * 100:.0f}% "
-                    f"预备 {setup.get('bars', '-')} 根HTF 位置 {setup.get('pos', '-')} "
-                    f"偏离 {setup.get('ext_atr', '-')}ATR")
+                if sig.get("chg_1h") is not None:
+                    log(f"信号   {symbol:12s} 1h {sig['chg_1h']:+.1f}% "
+                        f"15m {sig['chg_15m']:+.1f}% → 做空")
+                else:
+                    setup = sig.get("setup") or {}
+                    log(f"信号   {symbol:12s} 放量 {sig.get('vol_ratio')}x "
+                        f"上影 {(sig.get('upper_ratio') or 0) * 100:.0f}% "
+                        f"预备 {setup.get('bars', '-')} 根HTF 位置 {setup.get('pos', '-')} "
+                        f"偏离 {setup.get('ext_atr', '-')}ATR")
                 self.engine.open_short(symbol, sig, bar["c"])
             except Exception as e:  # noqa: BLE001
                 log(f"信号处理异常: {e}")
@@ -313,23 +323,31 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
     trade = cfg.get("trade") or {}
     sig = cfg.get("signal") or {}
     setup = cfg.get("setup") or {}
+    fade = cfg.get("fade") or {}
+    basket = cfg.get("basket") or {}
     bar_s = INTERVAL_S.get(cfg.get("interval", "1m"), 60)
     hold_bars = max(1, int(round(float(trade.get("max_hold_s", 180) or 180) / bar_s)))
-    if setup.get("enabled"):
+    if fade.get("enabled"):
+        warm = max(65, int(fade.get("lookback_min", 60)) + 2)
+    elif setup.get("enabled"):
         warm = max(60, (int(setup.get("lookback", 12)) + 2) * int(setup.get("htf_minutes", 30)))
     else:
         warm = max(60, (int(sig.get("htf_lookback", 12)) + 2) * int(sig.get("htf_minutes", 15))
                    if sig.get("htf_enabled") else 60)
-    mode_txt = (f"两段式 {setup.get('htf_minutes')}m→1m 放量{setup.get('trig_vol_mult')}x"
-                f"（预备 {setup.get('arm_bars')} 根有效）" if setup.get("enabled") else
-                f"单根形态 HTF {'开' if sig.get('htf_enabled') else '关'} "
-                f"{sig.get('htf_minutes')}m/{sig.get('htf_high_zone')}/{sig.get('htf_ext_atr')}ATR")
+    if fade.get("enabled"):
+        mode_txt = (f"暴涨做空 1h≥{fade.get('entry_pct')}% / 15m≥{fade.get('entry_15m_pct')}% "
+                    f"+ 均价加仓 {basket.get('add_step_pct')}%×{basket.get('max_adds')} "
+                    f"止盈 {basket.get('basket_tp_pct')}% 硬止损 {basket.get('hard_stop_pct')}%")
+    elif setup.get("enabled"):
+        mode_txt = (f"两段式 {setup.get('htf_minutes')}m→1m 放量{setup.get('trig_vol_mult')}x"
+                    f"（预备 {setup.get('arm_bars')} 根有效）")
+    else:
+        mode_txt = (f"单根形态 HTF {'开' if sig.get('htf_enabled') else '关'} "
+                    f"{sig.get('htf_minutes')}m/{sig.get('htf_high_zone')}/{sig.get('htf_ext_atr')}ATR")
     print(f"回放 {len(syms)} 个币 × 最近 {bars_per_symbol} 根 "
           f"{cfg.get('interval')}（预热 {warm} 根）\n"
           f"  信号：{mode_txt}\n"
-          f"  止损 {trade.get('sl_pct')}% · 阶梯 {ladder_of(trade)} · "
-          f"追踪 {trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp · "
-          f"最长 {hold_bars} 根（不含加仓）\n")
+          f"  最长持仓 {float(trade.get('max_hold_s', 180) or 180):.0f}s\n")
     total = wins = 0
     pnls: list[float] = []
     for sym in syms:
@@ -341,14 +359,24 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
         hits = 0
         sym_pnl = 0.0
         stage = SP.TwoStage(setup) if setup.get("enabled") else None
+        block_until = 0
         for i in range(warm, len(bars) - 1):
-            if stage is not None:
-                if not stage.on_bar(bars[:i + 1]):
+            if fade.get("enabled"):
+                if i < block_until:
                     continue
-            elif not SP.evaluate(bars[:i + 1], sig)["hit"]:
-                continue
-            hits += 1
-            pnl, _how, _held = simulate_exit(bars, i, trade, bar_s)
+                if not SF.fade_signal(bars[:i + 1], fade):
+                    continue
+                hits += 1
+                pnl, _how, _adds, held = SF.simulate_basket(bars, i, basket, bar_s)
+                block_until = i + max(1, held) + 1
+            else:
+                if stage is not None:
+                    if not stage.on_bar(bars[:i + 1]):
+                        continue
+                elif not SP.evaluate(bars[:i + 1], sig)["hit"]:
+                    continue
+                hits += 1
+                pnl, _how, _held = simulate_exit(bars, i, trade, bar_s)
             pnls.append(pnl)
             sym_pnl += pnl
             wins += int(pnl > 0)
@@ -359,7 +387,7 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
     if total:
         print(f"信号 {total} 笔 · 胜率 {wins / total * 100:.0f}% · "
               f"均值 {sum(pnls) / total:+.3f}% · 合计 {sum(pnls):+.2f}%")
-        print("（粗估：同根同时触及按止损算，未扣手续费与滑点，未模拟加仓）")
+        print("（粗估：同根同时触及按止损优先；未扣手续费与滑点；加仓按步长近似）")
     else:
         print("样本内没有信号：门槛偏高，或这段行情没有这种形态")
 
