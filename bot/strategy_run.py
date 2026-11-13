@@ -41,6 +41,22 @@ FAPI = "https://fapi.binance.com"
 # 币安 2026 起把合约行情 WS 迁到 /market/stream；老的 /ws、/stream 仍能握手但不推数据
 WS = "wss://fstream.binance.com/market/stream"
 BARS_KEEP = 1500       # 25 小时 1m，够聚合出 HTF 结构
+LOCK_PORT = 47613      # 单实例锁：端口被占说明已有策略在跑
+_LOCK_SOCK = None
+
+
+def acquire_single_instance() -> None:
+    """防止重复启动（GUI 连点、GUI + 命令行并存）导致双份下单。"""
+    global _LOCK_SOCK
+    import socket
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", LOCK_PORT))
+        s.listen(1)
+    except OSError:
+        sys.exit(f"已有策略实例在运行（本地端口 {LOCK_PORT} 被占用）。"
+                 f"先停止旧进程再启动。")
+    _LOCK_SOCK = s
 
 
 def scan_universe(cfg: dict) -> list[str]:
@@ -608,6 +624,7 @@ def main() -> None:
         return
 
     runner = Runner(cfg)
+    acquire_single_instance()
     set_log_file(ROOT / "bot" / "data" /
                  f"strategy-run-{datetime.now():%Y%m%d}.log")
     try:
