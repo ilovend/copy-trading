@@ -25,7 +25,7 @@ DATA = ROOT / "bot" / "data"
 FEE_RATE = 0.001          # 往返 0.1%，按名义估算
 
 MODE_LABEL = {"live": "实盘", "live_dry": "干跑", "shadow": "影子", "?": "未知"}
-REASON_LABEL = {"basket_tp": "止盈", "basket_stop": "止损", "basket_timeout": "超时", "basket_trail": "追踪",
+REASON_LABEL = {"basket_tp": "止盈", "basket_stop": "止损", "basket_timeout": "超时", "basket_trail": "追踪", "basket_trail_partial": "分批",
                 "stop_loss": "止损", "take_profit": "止盈", "timeout": "超时",
                 "trail": "追踪", "tp1": "止盈1", "tp2": "止盈2",
                 "cutoff": "收盘", "exchange_tp": "交易所止盈",

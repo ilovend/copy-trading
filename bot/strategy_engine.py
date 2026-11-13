@@ -792,6 +792,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         try:
             STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
             data = {s: {"qty": p["qty"], "avg": p["avg"], "side": p.get("side", "SHORT"),
+                        "trail_partial_done": bool(p.get("trail_partial_done")),
                         "opened_at": p["opened_at"], "entries": p["entries"]}
                     for s, p in self.positions.items()}
             tmp = STATE_PATH.with_suffix(".tmp")
@@ -843,6 +844,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                 "peak": 0.0, "trail_on": False, "trail_level": 0.0,
                 "tp_done": [False, False], "realized": 0.0, "parts": 0,
                 "detail": {}, "last_add_pnl": 0.0,
+                "trail_partial_done": bool(p.get("trail_partial_done")),
             }
             held = (time.time() - self.positions[sym]["opened_at"]) / 60
             self._place_protect(sym, self.positions[sym])

@@ -68,6 +68,8 @@ FADE_FIELDS = (
         ("均价止盈 %", "basket.basket_tp_pct"),
         ("追踪启动 %（0=关）", "basket.trail_activate_pct"),
         ("追踪回撤 pp", "basket.trail_gap_pct"),
+        ("分批止盈 %（0=关）", "basket.trail_partial_pct"),
+        ("分批比例", "basket.trail_partial_frac"),
         ("硬止损 %", "basket.hard_stop_pct"),
         ("最长持仓 (秒)", "basket.max_hold_s"),
         ("垂直拉升 1h %", "runaway.entry_1h_pct"),

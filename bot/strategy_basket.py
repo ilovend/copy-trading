@@ -30,6 +30,15 @@ class BasketMixin:
         if pnl <= -hard:
             self._close_partial(symbol, "basket_stop", mark, 1.0)
             return
+        # 浮盈到分批线：先平一部分，剩余继续追踪
+        part_pct = float(b.get("trail_partial_pct", 0) or 0)
+        part_frac = float(b.get("trail_partial_frac", 0) or 0)
+        if (part_pct > 0 and part_frac > 0 and not pos.get("trail_partial_done")
+                and pnl >= part_pct):
+            if self._close_partial(symbol, "basket_trail_partial", mark, part_frac):
+                pos["trail_partial_done"] = True
+                if symbol not in self.positions:
+                    return
         # 浮盈追踪：峰值上移，回撤到线就平（只上不下）
         trail_act = float(b.get("trail_activate_pct", 0) or 0)
         trail_gap = float(b.get("trail_gap_pct", 0) or 0)
