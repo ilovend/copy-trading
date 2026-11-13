@@ -131,7 +131,9 @@ class ProtectMixin:
             log(f"⚠ {symbol} 止盈价 {tp_px:g} 已被击穿（-2021），立即市价止盈")
             self._close_partial(symbol, "basket_tp", mark, 1.0, reprotect=False)
             return
-        pos["protect"] = ids
+        pos["protect"] = ids if sl_id else []   # 止损没挂上就当作未保护，稍后重试
+        if not sl_id:
+            log(f"⚠ {symbol} 止损条件单未挂上，30 秒后重试")
         if ids:
             log(f"PROTECT {symbol:12s} 止损 {sl_px:g} / 止盈 {tp_px:g}（交易所条件单）")
             self._notify(f"🛡 {symbol} 已挂交易所条件单\n"

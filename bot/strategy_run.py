@@ -566,9 +566,9 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
         stage = SP.TwoStage(setup) if sid == "two_stage" else None
         block_until = 0
         for i in range(warm, len(bars) - 1):
+            if i < block_until:
+                continue
             if sid == "fade":
-                if i < block_until:
-                    continue
                 sig_f = SF.fade_signal(bars[:i + 1], fade)
                 if not sig_f:
                     continue
@@ -583,7 +583,8 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
                 elif not SP.evaluate(bars[:i + 1], sig)["hit"]:
                     continue
                 hits += 1
-                pnl, _how, _held = simulate_exit(bars, i, trade, bar_s)
+                pnl, _how, held = simulate_exit(bars, i, trade, bar_s)
+                block_until = i + max(1, held) + 1
             pnls.append(pnl)
             sym_pnl += pnl
             wins += int(pnl > 0)

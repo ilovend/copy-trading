@@ -14,6 +14,13 @@ class BasketMixin:
         b = self.basket
         pnl = self._pnl_pct(pos.get("side", "SHORT"), pos["avg"], mark)
         pos["peak"] = max(pos["peak"], pnl)
+        # 保护单没挂上（或止损没挂上）时每 30 秒重试一次
+        if self.basket_on and self.protect_on and not pos.get("protect"):
+            if now - float(pos.get("last_protect_try", 0) or 0) >= 30:
+                pos["last_protect_try"] = now
+                self._place_protect(symbol, pos)
+                if symbol not in self.positions:
+                    return
         tp = float(b.get("basket_tp_pct", 0.5) or 0.5)
         hard = float(b.get("hard_stop_pct", 6.0) or 6.0)
         hold = float(b.get("max_hold_s", 3600) or 3600)
