@@ -222,6 +222,12 @@ class ExecClient:
                         {"symbol": symbol, "orderId": order_id},
                         key=self.key, secret=self.secret)
 
+    def user_trades(self, symbol: str, start_ms: int, limit: int = 200) -> list[dict]:
+        """成交明细（含 realizedPnl 与手续费），用于回填真实盈亏。"""
+        return _request("GET", "/fapi/v1/userTrades",
+                        {"symbol": symbol, "startTime": start_ms, "limit": limit},
+                        key=self.key, secret=self.secret)
+
     def cancel_all(self, symbol: str) -> dict:
         """撤掉该币全部挂单（策略停止/收盘清理用）。"""
         return _request("DELETE", "/fapi/v1/allOpenOrders",

@@ -837,13 +837,36 @@ class StrategyEngine:
                 log(f"⚠ {sym} 暂时查不到持仓（{pos['_miss']}/2），10 秒后复查")
                 continue
             self._cancel_protect(sym, pos)
+            # 用真实成交回填盈亏：交易所条件单成交时引擎只看到「仓位没了」
+            pnl = None
+            try:
+                rows = self._ex_client().user_trades(
+                    sym, int(float(pos.get("opened_at") or now) * 1000))
+                pnl = sum(float(r.get("realizedPnl") or 0)
+                          - float(r.get("commission") or 0) for r in rows)
+            except Exception:  # noqa: BLE001
+                pnl = None
+            if pnl is None:
+                reason, note = "external", "交易所已无持仓（未能取回成交明细）"
+            elif pnl > 0:
+                reason, note = "exchange_tp", "交易所止盈条件单成交"
+            elif pnl < 0:
+                reason, note = "exchange_sl", "交易所止损条件单成交"
+            else:
+                reason, note = "external", "交易所已无持仓"
             self.positions.pop(sym)
-            self._record("close", symbol=sym, reason="external", qty=0.0,
-                         pnl_total=round(float(pos.get("realized") or 0), 6),
-                         entries=len(pos.get("entries") or []),
-                         notes="交易所已无持仓，判定为手动平仓")
-            log(f"⚠ {sym} 交易所已无持仓（手动平仓？），清理本地状态")
-            self._notify(f"⚠️ 检测到 {sym} 已在交易所被平掉（可能是手动），已清理策略状态")
+            self.stats["closes"] += 1
+            if (pnl or 0) > 0:
+                self.stats["wins"] += 1
+            if pnl:
+                self.realized_today += pnl
+            self._record("close", symbol=sym, reason=reason, qty=0.0,
+                         pnl_total=round(pnl, 6) if pnl is not None else 0.0,
+                         entries=len(pos.get("entries") or []), notes=note)
+            log(f"⚠ {sym} {note}：{('%.3f' % pnl) if pnl is not None else '?'}U，清理状态")
+            self._notify(f"⚠️ {sym} 已被交易所平掉（{reason}）\n"
+                         f"净盈亏 {pnl:+.3f}U" if pnl is not None
+                         else f"⚠️ {sym} 交易所以无持仓，已清理状态")
         self._save_state()
 
     def _close_partial(self, symbol: str, reason: str, mark: float,

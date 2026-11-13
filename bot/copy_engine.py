@@ -68,34 +68,40 @@ def load_config() -> dict:
 
 
 _PUB_CONN: http.client.HTTPSConnection | None = None
+_PUB_LOCK = threading.Lock()
 
 
 def http_json(url: str, timeout: int = 10):
-    """公开接口也复用连接，避免每次 TLS 握手（0.7s → 0.1s）。"""
+    """公开接口也复用连接，避免每次 TLS 握手（0.7s → 0.1s）。
+
+    注意：连接是全局共享的，多个线程（涨榜扫描、REST 轮询、预取）同时调用会
+    出现 WinError 10038「在一个非套接字上尝试了一个操作」，这里加锁串行化。
+    """
     global _PUB_CONN
     path = url.replace("https://fapi.binance.com", "")
-    last: Exception | None = None
-    for _ in range(2):
-        try:
-            if _PUB_CONN is None:
-                _PUB_CONN = http.client.HTTPSConnection("fapi.binance.com", timeout=timeout)
-            _PUB_CONN.request("GET", path, headers={"User-Agent": "copy-engine/0.3",
-                                                    "Connection": "keep-alive"})
-            resp = _PUB_CONN.getresponse()
-            raw = resp.read()
-            if resp.getheader("connection", "").lower() == "close":
-                _PUB_CONN.close()
-                _PUB_CONN = None
-            return json.loads(raw.decode())
-        except Exception as e:  # noqa: BLE001
-            last = e
+    with _PUB_LOCK:
+        last: Exception | None = None
+        for _ in range(2):
             try:
-                if _PUB_CONN:
+                if _PUB_CONN is None:
+                    _PUB_CONN = http.client.HTTPSConnection("fapi.binance.com", timeout=timeout)
+                _PUB_CONN.request("GET", path, headers={"User-Agent": "copy-engine/0.3",
+                                                        "Connection": "keep-alive"})
+                resp = _PUB_CONN.getresponse()
+                raw = resp.read()
+                if resp.getheader("connection", "").lower() == "close":
                     _PUB_CONN.close()
-            except Exception:  # noqa: BLE001
-                pass
-            _PUB_CONN = None
-    raise RuntimeError(f"request failed: {last}")
+                    _PUB_CONN = None
+                return json.loads(raw.decode())
+            except Exception as e:  # noqa: BLE001
+                last = e
+                try:
+                    if _PUB_CONN:
+                        _PUB_CONN.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                _PUB_CONN = None
+        raise RuntimeError(f"request failed: {last}")
 
 
 class CopyEngine:
