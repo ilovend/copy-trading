@@ -185,6 +185,34 @@ def rss_mb():
         return None
 
 
+def filter_snapshot() -> dict:
+    try:
+        import symbol_filter as SF
+        data = SF._clean(SF.load())
+        today = __import__("datetime").date.today()
+        items = []
+        for sym, v in (data.get("blacklist") or {}).items():
+            until = str(v.get("until") or "")
+            days = None
+            if until:
+                try:
+                    days = (__import__("datetime").datetime.strptime(until, "%Y-%m-%d").date() - today).days
+                except Exception:
+                    days = None
+            reason = str(v.get("reason") or "手动")
+            items.append({
+                "symbol": sym, "reason": reason, "until": until,
+                "days": days,
+                "remaining": ("永久" if not until else
+                              (f"剩余 {max(days, 0)} 天" if days is not None else until)),
+                "auto": ("垂直拉升" in reason),
+            })
+        items.sort(key=lambda x: (not x["auto"], x["until"] or "9999", x["symbol"]))
+        return {"ok": True, "items": items}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:160], "items": []}
+
+
 def service_status() -> str:
     try:
         r = subprocess.run([INIT, "status"], capture_output=True, text=True, timeout=3)
@@ -316,6 +344,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "lines": tail_log(n, events)})
         if self.path.startswith("/api/account"):
             return self._json({"ok": True, **account()})
+        if self.path.startswith("/api/filter"):
+            return self._json(filter_snapshot())
         if self.path.startswith("/api/config"):
             cfg = read_json(CONFIG, {})
             return self._json({"ok": True, "values": {k: get_path(cfg, k) for k in FIELDS}})
@@ -346,6 +376,41 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(1.2)
             return self._json({"ok": r.returncode == 0, "output": (r.stdout or r.stderr or "")[-300:],
                                "service": service_status()})
+
+        if self.path.startswith("/api/filter/block"):
+            raw = data.get("symbols") or data.get("symbol") or ""
+            if isinstance(raw, str):
+                symbols = [x.strip().upper() for x in raw.replace("，", ",").split(",")]
+            elif isinstance(raw, list):
+                symbols = [str(x).strip().upper() for x in raw]
+            else:
+                symbols = []
+            symbols = [x for x in symbols if x]
+            if not symbols:
+                return self._json({"ok": False, "error": "请输入币种，例如 BTCUSDT, ETHUSDT"}, 400)
+            if len(symbols) > 20:
+                return self._json({"ok": False, "error": "一次最多 20 个"}, 400)
+            for s in symbols:
+                if not re.fullmatch(r"[A-Z0-9]{2,30}USDT", s):
+                    return self._json({"ok": False, "error": f"币种不合法: {s}"}, 400)
+            try:
+                import symbol_filter as SF
+                for s in symbols:
+                    SF.block(s, "手动", 0)   # 永久
+            except Exception as e:  # noqa: BLE001
+                return self._json({"ok": False, "error": str(e)[:160]}, 500)
+            return self._json({"ok": True, "blocked": symbols})
+
+        if self.path.startswith("/api/filter/unblock"):
+            sym = str(data.get("symbol") or "").strip().upper()
+            if not re.fullmatch(r"[A-Z0-9]{2,30}USDT", sym):
+                return self._json({"ok": False, "error": "币种不合法"}, 400)
+            try:
+                import symbol_filter as SF
+                removed = SF.unblock(sym)
+            except Exception as e:  # noqa: BLE001
+                return self._json({"ok": False, "error": str(e)[:160]}, 500)
+            return self._json({"ok": True, "removed": removed, "symbol": sym})
 
         if self.path.startswith("/api/config"):
             values = data.get("values") or {}

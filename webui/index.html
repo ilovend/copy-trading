@@ -58,6 +58,18 @@ pre{background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:10
   padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px}
 .live-warn.show{display:block}
 
+/* 合约黑名单 */
+.filter-line{display:flex;gap:8px;flex-wrap:wrap}
+.filter-line input{flex:1 1 240px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;min-height:26px}
+.tag{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);
+  background:#1d2229;border-radius:999px;padding:4px 8px;font-size:12px;color:var(--muted)}
+.tag.auto{border-color:#6b4a15;background:#2a2110;color:#fbbf24}
+.tag.manual{border-color:#3a3f47;color:var(--muted)}
+.tag .rm{border:0;background:transparent;color:inherit;padding:0 2px;min-height:auto;
+  font-size:14px;line-height:1;cursor:pointer}
+.tag .sub{opacity:.75;font-size:11px}
+
 /* 参数折叠 */
 details.card{padding:0}
 details.card > summary{list-style:none;cursor:pointer;padding:12px;display:flex;
@@ -185,6 +197,16 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
       <p class="note">单笔名义同时写入 trade 和 basket，避免两处改串。实盘保存必须输入 <b>LIVE</b>；运行中改参数不会热更新。</p>
     </div>
   </details>
+
+  <section class="card">
+    <h2>合约黑名单</h2>
+    <div class="filter-line">
+      <input id="blockInput" placeholder="BTCUSDT, ETHUSDT（逗号分隔，永久屏蔽）">
+      <button id="btnBlock">永久屏蔽</button>
+    </div>
+    <p class="note">黑名单立即生效，不需要重启策略；自动拉黑来自垂直拉升保护。</p>
+    <div class="tags" id="blackTags"><span class="note">加载中…</span></div>
+  </section>
 
   <section class="card">
     <h2>日志</h2>
@@ -324,6 +346,50 @@ async function refresh() {
     $('acctNote').textContent = a.ok ? `${a.hedge ? '双向' : '单向'}持仓` : (a.error || '');
   } catch (e) { /* ignore */ }
 }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+async function refreshFilter() {
+  try {
+    const d = await api('/api/filter');
+    const box = $('blackTags');
+    const items = d.items || [];
+    if (!items.length) { box.innerHTML = '<span class="note">暂无黑名单</span>'; return; }
+    box.innerHTML = items.map(it => {
+      const cls = it.auto ? 'auto' : 'manual';
+      const kind = it.auto ? '自动' : '手动';
+      const rem = it.remaining || '';
+      return `<span class="tag ${cls}" title="${esc(it.reason || '')}">
+        ${esc(it.symbol)} <span class="sub">${kind} · ${esc(rem)}</span>
+        <button class="rm" data-sym="${esc(it.symbol)}" aria-label="解除">×</button>
+      </span>`;
+    }).join('');
+  } catch (e) { /* ignore */ }
+}
+async function blockSymbols() {
+  const raw = $('blockInput').value.trim();
+  if (!raw) { toast('请输入币种', 'err'); return; }
+  try {
+    const d = await api('/api/filter/block', {method:'POST', body:JSON.stringify({symbols:raw})});
+    toast('已永久屏蔽：' + (d.blocked || []).join(', '), 'ok');
+    $('blockInput').value = '';
+    refreshFilter();
+  } catch (e) { toast('屏蔽失败：' + e.message, 'err'); }
+}
+async function unblockSymbol(sym) {
+  if (!confirm(`解除 ${sym} 的黑名单？`)) return;
+  try {
+    await api('/api/filter/unblock', {method:'POST', body:JSON.stringify({symbol:sym})});
+    toast('已解除 ' + sym, 'ok');
+    refreshFilter();
+  } catch (e) { toast('解除失败：' + e.message, 'err'); }
+}
+$('btnBlock').onclick = blockSymbols;
+$('blackTags').addEventListener('click', e => {
+  const b = e.target.closest('button[data-sym]');
+  if (b) unblockSymbol(b.dataset.sym);
+});
+
 async function refreshLog() {
   try {
     const q = new URLSearchParams({lines:$('logLines').value});
@@ -369,9 +435,10 @@ $('btnStop').onclick = () => control('stop');
 $('btnSave').onclick = save;
 $('logLines').onchange = refreshLog;
 $('onlyEvents').onchange = refreshLog;
-refresh(); refreshLog();
+refresh(); refreshLog(); refreshFilter();
 setInterval(refresh, 3000);
 setInterval(refreshLog, 2500);
+setInterval(refreshFilter, 15000);
 </script>
 </body>
 </html>
