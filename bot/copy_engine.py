@@ -193,10 +193,10 @@ class CopyEngine:
             return hit[1]
         eq = 0.0
         try:
-            from listen_copy import api, load_session, SESSION
-            if not SESSION:
-                load_session()
-            j = api("/bapi/futures/v1/private/future/copy-trade/copy-portfolio/detail-list", "GET")
+            import bapi
+            if not bapi.SESSION:
+                bapi.load_session()
+            j = bapi.api("/bapi/futures/v1/private/future/copy-trade/copy-portfolio/detail-list", "GET")
             for row in j.get("data") or []:
                 if row.get("copyPortfolioId") == portfolio:
                     eq = float(row.get("netCopyAmount") or 0)
@@ -264,10 +264,10 @@ class CopyEngine:
             return hit[1]
         lev = 0.0
         try:
-            from listen_copy import api, load_session, SESSION
-            if not SESSION:
-                load_session()
-            j = api("/bapi/futures/v6/private/future/user-data/user-position", "POST",
+            import bapi
+            if not bapi.SESSION:
+                bapi.load_session()
+            j = bapi.api("/bapi/futures/v6/private/future/user-data/user-position", "POST",
                     {"copyTradeType": "COPY", "portfolioId": portfolio})
             for row in (j.get("data") or []):
                 if row.get("symbol") != symbol:

@@ -1,5 +1,21 @@
 # 更新日志
 
+## v1.13.3（2026-11-13）
+
+P2 第二步：抽 `bapi.py`（登录态 + 私有接口）。
+
+- 新增 `bot/bapi.py`：`SESSION` / `HEADERS` / `load_session` /
+  `reload_session_if_changed` / `api`，从 `listen_copy` 迁出
+- `listen_copy` 改为转发（`api/load_session/reload_session_if_changed` 仍可用），
+  `copy_engine` 改用 `bapi`，不再从监听器 import
+- 实测：
+  · `bapi.api` 查带单员详情返回 `000000 玄冥二老`
+  · `CopyEngine._mirror_equity` 返回净投入 299.96
+  · `discover_portfolios` 返回 3 个组合
+  · 核心测试 7/7、4/4、4/4、ALL PASS
+
+---
+
 ## v1.13.2（2026-11-13）
 
 实盘互斥锁：复制与策略不能同时在 live 下单。

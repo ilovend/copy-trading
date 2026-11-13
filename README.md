@@ -87,6 +87,8 @@ bot/
   strategy_config.py 策略参数默认值与读写（含类型/范围校验）
   net.py            公开 HTTP（复用连接 + 线程锁）
   notify.py         .env 与 Telegram 推送
+  bapi.py           币安网页私有接口（登录态 + bapi 请求）
+  trade_lock.py     实盘互斥锁（复制/策略只能一个 live）
   symbol_filter.py  合约过滤：白名单 / 黑名单 / 自动拉黑
   version.py        版本号
 gui/
