@@ -1,5 +1,29 @@
 # 更新日志
 
+## v1.10.9（2026-11-13）
+
+止盈改用「最后成交价」触发，止损仍用「标记价」。
+
+### 现象
+
+AKE 13:53 图上插针到 0.002881（低于止盈 0.002884），但标记价最低只到 0.002890，
+条件单按 `MARK_PRICE` 判断，所以没触发；一分钟后价格反弹，那波止盈没吃到。
+
+### 修复
+
+- 新增 `basket.tp_working_type`（默认 `CONTRACT_PRICE`）与
+  `basket.sl_working_type`（默认 `MARK_PRICE`）
+- 止盈按最后成交价：插针打到就成交（平空是买入，低点是好事）
+- 止损仍按标记价：避免被一根假针扫掉
+
+### 实测
+
+CBRS 挂单验证：
+`TAKE_PROFIT_MARKET workingType=CONTRACT_PRICE qty=0.05`、
+`STOP_MARKET workingType=MARK_PRICE closePosition=true`。
+
+---
+
 ## v1.10.8（2026-11-13）
 
 修 maker 撤单与成交的竞态（会出现「无保护裸仓」），并清理残留条件单。

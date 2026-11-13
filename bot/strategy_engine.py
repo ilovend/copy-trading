@@ -755,13 +755,15 @@ class StrategyEngine:
         return False
 
     def _place_one_protect(self, ex, symbol: str, kind: str, price: float,
-                           ps: str | None, qty: float | None = None) -> int | None:
+                           ps: str | None, qty: float | None = None,
+                           working_type: str = "MARK_PRICE") -> int | None:
         """挂单个条件单，处理「旧单还没撤干净」(-4130) 与连接抖动。"""
         last_msg = ""
         for attempt in range(1, 5):
             try:
                 r = ex.stop_close(symbol, "BUY", price, kind=kind,
-                                  position_side=ps, qty=qty)
+                                  position_side=ps, qty=qty,
+                                  working_type=working_type)
                 return r.get("algoId") or r.get("orderId")
             except Exception as e:  # noqa: BLE001
                 msg = str(e)
@@ -811,11 +813,14 @@ class StrategyEngine:
         except Exception:  # noqa: BLE001
             pass
         ids = []
-        sl_id = self._place_one_protect(ex, symbol, "STOP_MARKET", sl_px, ps)
+        sl_work = str(b.get("sl_working_type", "MARK_PRICE") or "MARK_PRICE")
+        tp_work = str(b.get("tp_working_type", "CONTRACT_PRICE") or "CONTRACT_PRICE")
+        sl_id = self._place_one_protect(ex, symbol, "STOP_MARKET", sl_px, ps,
+                                       working_type=sl_work)
         if sl_id:
             ids.append(sl_id)
         tp_id = self._place_one_protect(ex, symbol, "TAKE_PROFIT_MARKET", tp_px, ps,
-                                       qty=pos["qty"])
+                                       qty=pos["qty"], working_type=tp_work)
         if tp_id:
             ids.append(tp_id)
         pos["protect"] = ids
