@@ -129,6 +129,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         self._cooldown: dict[str, float] = {}
         self._day = datetime.now().date()
         self._halt = ""
+        self._api_hold = 0.0
+        self._api_logged = False
         self.realized_today = self._load_realized_today()
         self.stats = {"signals": 0, "opens": 0, "adds": 0, "closes": 0,
                       "wins": 0, "pnl": 0.0, "rejects": 0}
@@ -299,6 +301,17 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         except Exception:  # noqa: BLE001
             pass
 
+    def _api_fail(self, msg: str) -> None:
+        """API Key / IP 权限失效：暂停 60 秒，只提示一次，避免刷屏重试。"""
+        if not any(x in msg for x in ("-2015", "-2014", "Invalid API-key")):
+            return
+        self._api_hold = time.time() + 60
+        if not self._api_logged:
+            self._api_logged = True
+            log("⛔ API Key / IP 权限失效：暂停下单 60 秒，检查白名单后重启")
+            self._notify("⛔ API Key / IP 权限失效\n暂停下单 60 秒\n"
+                         "请检查币安 API 的 IP 白名单")
+
     def _reject(self, symbol: str, reason: str, detail: str, **extra) -> None:
         self.stats["rejects"] += 1
         self._record("reject", symbol=symbol, reason=reason, detail=detail, **extra)
@@ -354,6 +367,9 @@ class StrategyEngine(BasketMixin, ProtectMixin):
     def open_short(self, symbol: str, detail: dict, signal_price: float) -> bool:
         self._reset_daily()
         self.stats["signals"] += 1
+        if time.time() < self._api_hold:
+            self._reject(symbol, "api_hold", "API 权限失效，暂停中")
+            return False
         side = str(detail.get("side") or "SHORT").upper()
         if side not in ("SHORT", "LONG"):
             side = "SHORT"
@@ -518,6 +534,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                     entry = float(resp.get("avgPrice") or 0) or px
                     qty = filled
             except Exception as e:  # noqa: BLE001
+                self._api_fail(str(e))
                 self._reject(symbol, "order_failed", str(e)[:160])
                 self._notify(f"⚠️ 策略{'加仓' if add else '开仓'}失败 {symbol}\n{str(e)[:150]}")
                 return False
@@ -703,7 +720,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
 
     # ------------------------------------------------------------- 持仓管理
     def manage(self, prices: dict[str, float]) -> None:
-        if not self.positions:
+        if not self.positions or time.time() < self._api_hold:
             return
         self._reconcile()
         if not self.positions:
@@ -1021,6 +1038,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                     log(f"⚠ {symbol} 平仓被拒（仓位已被条件单平掉），转入对账")
                     self._settle_external(symbol)
                     return True
+                self._api_fail(msg)
                 self._reject(symbol, "close_failed", msg[:160])
                 self._notify(f"🚨 策略平仓失败 {symbol}\n{msg[:150]}")
                 if self.basket_on and reprotect:
