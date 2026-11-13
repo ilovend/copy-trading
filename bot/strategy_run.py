@@ -434,7 +434,11 @@ class Runner:
             f"加仓={trade.get('max_adds')}次/{trade.get('add_window_s')}s "
             f"最长持仓={trade.get('max_hold_s')}s")
         log(f"策略：{self.sid} · 方向 {self.cfg.get('direction', 'short')} · "
-            f"信号周期 {self.cfg.get('signal_interval', self.interval)}")
+            f"执行 {self.interval} / 信号 {self.cfg.get('signal_interval', self.interval)}")
+        if self.interval != "1m":
+            log("⚠ 执行周期不是 1m：1h/15m 涨幅会按该周期 K 线计算，语义与 1m 不同")
+        if str(self.cfg.get("signal_interval", "1m")) < self.interval:
+            log("⚠ 信号周期小于执行周期，实际会按执行周期每根判断")
         if self.sid != "fade" and str(self.cfg.get("direction", "short")) != "short":
             log("⚠ 当前策略只做空，direction 设置被忽略")
         await asyncio.to_thread(self.engine.load_filters)
@@ -623,7 +627,8 @@ def main() -> None:
     ap.add_argument("--top", type=int, default=0, help="覆盖候选池数量")
     ap.add_argument("--preset", default="", help="覆盖参数预设：scalp / swing")
     ap.add_argument("--signal-interval", default="",
-                    choices=["1m", "3m", "5m", "15m", "30m", "1h", "4h"],
+                    choices=["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h",
+                             "6h", "8h", "12h", "1d", "3d", "1w", "1M"],
                     help="覆盖信号判断周期")
     ap.add_argument("--direction", default="", choices=["short", "long", "both"],
                     help="覆盖方向：short / long / both")

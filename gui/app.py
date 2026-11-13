@@ -1187,6 +1187,8 @@ class App:
         self.cb_sg_mode.set(next((k for k, v in self._sg_mode_labels.items()
                                   if v == cur), list(self._sg_mode_labels)[0]))
         self.cb_sg_interval.set(cfg.get("interval", "1m"))
+        self.cb_sg_sigtf.set(cfg.get("signal_interval", "1m"))
+        self._on_interval_change()
         self.var_sg_push.set(bool(cfg.get("push", True)))
         self.var_sg_lev.set(bool((cfg.get("trade") or {}).get("manage_leverage")))
         self.var_sg_htf.set(bool((cfg.get("signal") or {}).get("htf_enabled", True)))
@@ -1243,15 +1245,29 @@ class App:
         self.cb_sg_mode.set(next((k for k, v in self._sg_mode_labels.items()
                                   if v == cur_mode), list(self._sg_mode_labels)[0]))
         self.cb_sg_mode.grid(row=0, column=0, sticky="w")
-        ttk.Label(mode_box, text="K 线周期", style="Muted.TLabel").grid(
+        ttk.Label(mode_box, text="执行周期", style="Muted.TLabel").grid(
             row=0, column=1, padx=(18, 6))
-        self.cb_sg_interval = ttk.Combobox(mode_box, values=["1m", "5m"],
+        self.cb_sg_interval = ttk.Combobox(mode_box, values=SC.INTERVALS,
                                            state="readonly", width=6)
         self.cb_sg_interval.set(cfg.get("interval", "1m"))
         self.cb_sg_interval.grid(row=0, column=2, sticky="w")
+        ttk.Label(mode_box, text="信号周期", style="Muted.TLabel").grid(
+            row=0, column=3, padx=(18, 6))
+        self.cb_sg_sigtf = ttk.Combobox(mode_box, values=SC.INTERVALS,
+                                        state="readonly", width=6)
+        self.cb_sg_sigtf.set(cfg.get("signal_interval", "1m"))
+        self.cb_sg_sigtf.grid(row=0, column=4, sticky="w")
         self.var_sg_push = tk.BooleanVar(value=bool(cfg.get("push", True)))
         ttk.Checkbutton(mode_box, text="开平仓推 Telegram",
-                        variable=self.var_sg_push).grid(row=0, column=3, padx=(20, 0))
+                        variable=self.var_sg_push).grid(row=0, column=5, padx=(20, 0))
+        self.cb_sg_interval.bind("<<ComboboxSelected>>",
+                                 lambda _e: self._on_interval_change())
+        self.cb_sg_sigtf.bind("<<ComboboxSelected>>",
+                              lambda _e: self._on_interval_change())
+        self.var_sg_int_warn = tk.StringVar(value="")
+        ttk.Label(mode_box, textvariable=self.var_sg_int_warn,
+                  style="Danger.TLabel", wraplength=820).grid(
+            row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         self.sg_fields_host = ttk.Frame(parent)
         self.sg_fields_host.pack(fill="x")
@@ -1353,7 +1369,8 @@ class App:
         cfg = self.sg_cfg if getattr(self, "sg_cfg", None) else SC.load()
         cfg["strategy"] = getattr(self, "active_strategy", "fade")
         cfg["mode"] = self._sg_mode_labels.get(self.cb_sg_mode.get(), "shadow")
-        cfg["interval"] = self.cb_sg_interval.get() or "1m"
+        cfg["interval"] = self.cb_sg_interval.get()
+        cfg["signal_interval"] = self.cb_sg_sigtf.get() or "1m"
         cfg["push"] = bool(self.var_sg_push.get())
         cfg.setdefault("trade", {})["manage_leverage"] = bool(self.var_sg_lev.get())
         cfg.setdefault("signal", {})["htf_enabled"] = bool(self.var_sg_htf.get())
@@ -1472,10 +1489,31 @@ class App:
 
         self.root.after(0, done)
 
+    def _on_interval_change(self) -> None:
+        ex = self.cb_sg_interval.get()
+        sg = self.cb_sg_sigtf.get()
+        if ex != "1m":
+            self.var_sg_int_warn.set(
+                "⚠ 执行周期不是 1m：fade 的 1h/15m 涨幅会按该周期 K 线计算，"
+                "回放明显变差（15m 执行约 -1.15%/笔）。建议：执行 1m + 信号 15m。")
+        elif sg == "1m":
+            self.var_sg_int_warn.set(
+                "提示：1m 信号假信号较多；可把「信号周期」改成 15m（执行仍 1m）。")
+        else:
+            self.var_sg_int_warn.set(
+                f"执行 1m / 信号 {sg}：只在 {sg} 收盘判断，持仓仍按逐笔管理。")
+
     def start_strategy(self) -> None:
         if not self.save_strategy_cfg():
             return
         cfg = SC.load()
+        if cfg.get("interval", "1m") != "1m" and not messagebox.askokcancel(
+                "周期提醒",
+                f"执行周期是 {cfg.get('interval')}，不是 1m。\n\n"
+                "fade 的 1h/15m 涨幅会按该周期 K 线计算，语义改变，"
+                "回放为负期望。\n\n"
+                "正确的用法是：执行周期 1m + 信号周期 15m。\n\n仍要启动？"):
+            return
         if cfg.get("mode") == "live":
             trade = cfg.get("trade") or {}
             basket = cfg.get("basket") or {}
