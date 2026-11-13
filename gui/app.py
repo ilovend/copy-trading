@@ -1116,6 +1116,7 @@ class App:
                           style="Muted.TLabel").pack(side="left")
                 var = tk.StringVar(value=self._sg_fmt(self._sg_get(cfg, key)))
                 choices = {"universe.sort_by": ["change", "volume"],
+                           "signal_interval": ["1m", "5m", "15m", "30m", "1h", "4h"],
                            "direction": ["short", "long", "both"],
                            "trade.entry_mode": ["taker", "maker"],
                            "trade.tp_mode": ["taker", "maker"]}.get(key)
@@ -1218,7 +1219,7 @@ class App:
         preset_box = ttk.LabelFrame(parent, text="参数预设", padding=10)
         preset_box.pack(fill="x")
         self._preset_labels = {"复刻带单员：暴涨做空 + 有限加仓": "fade",
-                               "宽止盈实验（TP4/SL6，5 天复核为正）": "fade_wide",
+                               "宽止盈·15m 信号（TP4/SL6）": "fade_wide",
                                "复刻（首跑实盘：5U×3 笔、单币）": "fade_live",
                                "激进·100U（10U×6、日亏≤15U）": "aggr_100",
                                "激进·500U（20U×6、日亏≤30U）": "aggr_500"}

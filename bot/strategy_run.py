@@ -164,6 +164,12 @@ class Runner:
                 bars = list(self.bars.get(symbol) or [])
                 if not bars or bars[-1].get("t") != bar["t"]:
                     continue
+                # 只在「信号周期」的收盘时判断（执行仍用 1m 数据）
+                bar_s = INTERVAL_S.get(self.interval, 60)
+                sig_s = INTERVAL_S.get(str(self.cfg.get("signal_interval") or self.interval),
+                                       bar_s)
+                if bar_s < sig_s and (bar["t"] + bar_s * 1000) % (sig_s * 1000) != 0:
+                    continue
                 sig = None
                 if self.sid == "fade":
                     # 已有仓位时不重复开首仓（加仓由引擎按逆行触发）
@@ -427,7 +433,8 @@ class Runner:
             f"追踪={trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp "
             f"加仓={trade.get('max_adds')}次/{trade.get('add_window_s')}s "
             f"最长持仓={trade.get('max_hold_s')}s")
-        log(f"策略：{self.sid} · 方向 {self.cfg.get('direction', 'short')}")
+        log(f"策略：{self.sid} · 方向 {self.cfg.get('direction', 'short')} · "
+            f"信号周期 {self.cfg.get('signal_interval', self.interval)}")
         if self.sid != "fade" and str(self.cfg.get("direction", "short")) != "short":
             log("⚠ 当前策略只做空，direction 设置被忽略")
         await asyncio.to_thread(self.engine.load_filters)
@@ -568,6 +575,11 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
         for i in range(warm, len(bars) - 1):
             if i < block_until:
                 continue
+            bar_s = INTERVAL_S.get(cfg.get("interval", "1m"), 60)
+            sig_s = INTERVAL_S.get(str(cfg.get("signal_interval") or cfg.get("interval", "1m")),
+                                   bar_s)
+            if bar_s < sig_s and (bars[i]["t"] + bar_s * 1000) % (sig_s * 1000) != 0:
+                continue
             if sid == "fade":
                 sig_f = SF.fade_signal(bars[:i + 1], fade)
                 if not sig_f:
@@ -610,6 +622,9 @@ def main() -> None:
     ap.add_argument("--interval", default="", help="覆盖 K 线周期")
     ap.add_argument("--top", type=int, default=0, help="覆盖候选池数量")
     ap.add_argument("--preset", default="", help="覆盖参数预设：scalp / swing")
+    ap.add_argument("--signal-interval", default="",
+                    choices=["1m", "3m", "5m", "15m", "30m", "1h", "4h"],
+                    help="覆盖信号判断周期")
     ap.add_argument("--direction", default="", choices=["short", "long", "both"],
                     help="覆盖方向：short / long / both")
     ap.add_argument("--entry-pct", type=float, default=0.0, help="覆盖 1h 阈值 %%")
@@ -627,6 +642,8 @@ def main() -> None:
         cfg = apply_preset(cfg, args.preset)
     if args.mode:
         cfg["mode"] = args.mode
+    if args.signal_interval:
+        cfg["signal_interval"] = args.signal_interval
     if args.direction:
         cfg["direction"] = args.direction
     if args.entry_pct:
