@@ -1276,25 +1276,43 @@ class App:
         ttk.Label(parent, text="合约过滤（偏好合约）", style="Section.TLabel").pack(
             anchor="w", pady=(14, 4))
         ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
-            "勾选 = 允许交易，取消勾选 = 加入黑名单（永久，重新勾选即可恢复）。"
-            "垂直拉升会自动拉黑、次日自动恢复；默认全选。"
+            "列出全部 USDT 永续合约（按成交额排序）：勾选 = 允许，取消勾选 = 拉黑。"
+            "默认全选；垂直拉升自动拉黑的币显示为未勾选，次日恢复。搜索框可快速定位。"
         )).pack(anchor="w")
-        flt = ttk.LabelFrame(parent, text="候选合约（默认全选）", padding=10)
+        flt = ttk.LabelFrame(parent, text="全部 USDT 永续（默认全选）", padding=10)
         flt.pack(fill="x", pady=(4, 0))
         fb = ttk.Frame(flt)
         fb.pack(fill="x")
-        ttk.Button(fb, text="重载候选",
+        ttk.Button(fb, text="刷新列表",
                    command=self.reload_filter_candidates).pack(side="left")
-        ttk.Button(fb, text="全选",
+        ttk.Button(fb, text="全选(当前)",
                    command=lambda: self.set_all_filters(True)).pack(side="left", padx=6)
-        ttk.Button(fb, text="全不选",
+        ttk.Button(fb, text="全不选(当前)",
                    command=lambda: self.set_all_filters(False)).pack(side="left")
-        ttk.Button(fb, text="刷新",
+        ttk.Button(fb, text="刷新勾选",
                    command=self.refresh_filter_checks).pack(side="left", padx=6)
-        self.flt_grid = ttk.Frame(flt)
-        self.flt_grid.pack(fill="x", pady=(8, 0))
+        srow = ttk.Frame(flt)
+        srow.pack(fill="x", pady=(8, 0))
+        ttk.Label(srow, text="搜索").pack(side="left")
+        self.var_flt_search = tk.StringVar()
+        ttk.Entry(srow, textvariable=self.var_flt_search).pack(
+            side="left", fill="x", expand=True, padx=(6, 0))
+        self.var_flt_search.trace_add(
+            "write", lambda *_: self._schedule_filter_render())
+        box = ttk.Frame(flt)
+        box.pack(fill="both", expand=True, pady=(8, 0))
+        self.flt_canvas = tk.Canvas(box, height=200, highlightthickness=0)
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.flt_canvas.yview)
+        self.flt_inner = ttk.Frame(self.flt_canvas)
+        self.flt_inner.bind("<Configure>", lambda e: self.flt_canvas.configure(
+            scrollregion=self.flt_canvas.bbox("all")))
+        self.flt_canvas.create_window((0, 0), window=self.flt_inner, anchor="nw")
+        self.flt_canvas.configure(yscrollcommand=sb.set)
+        self.flt_canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
         self.flt_vars: dict[str, tk.BooleanVar] = {}
         self._filter_symbols: list[str] = []
+        self._flt_after = None
         self.refresh_filter_checks()
         btns = ttk.Frame(parent)
         btns.pack(fill="x", pady=(12, 0))
@@ -1354,35 +1372,44 @@ class App:
         return True
 
     def refresh_filter_checks(self) -> None:
-        """按当前候选 + 黑名单重建勾选列表。"""
-        syms: list[str] = []
+        """从缓存加载全部合约并重建勾选列表。"""
         try:
-            status = ROOT / "bot" / "data" / "strategy-status.json"
-            data = json.loads(status.read_text(encoding="utf-8"))
-            syms = list(data.get("symbols") or [])
-        except Exception:  # noqa: BLE001
+            syms = SF.list_all()
+        except Exception as e:  # noqa: BLE001
             syms = []
-        black = list((SF.load().get("blacklist") or {}).keys())
-        self._render_filter_checks(list(dict.fromkeys(syms + black)))
+            self._append(f"合约列表加载失败：{str(e)[:80]}", "danger", self.slog)
+        self._render_filter_checks(syms)
+
+    def _schedule_filter_render(self) -> None:
+        if self._flt_after:
+            try:
+                self.root.after_cancel(self._flt_after)
+            except Exception:  # noqa: BLE001
+                pass
+        self._flt_after = self.root.after(
+            250, lambda: self._render_filter_checks(self._filter_symbols))
 
     def _render_filter_checks(self, syms: list[str]) -> None:
         self._filter_symbols = list(syms)
-        for w in self.flt_grid.winfo_children():
+        q = (self.var_flt_search.get() if hasattr(self, "var_flt_search") else "").strip().upper()
+        show = [s for s in syms if not q or q in s]
+        for w in self.flt_inner.winfo_children():
             w.destroy()
         self.flt_vars = {}
-        if not syms:
-            ttk.Label(self.flt_grid, style="Dim.TLabel",
-                      text="暂无候选：点「重载候选」，或先启动一次策略").grid(
-                row=0, column=0, sticky="w")
-            return
         black = SF.load().get("blacklist") or {}
-        cols = 3 if len(syms) > 12 else 2
-        for idx, s in enumerate(syms):
-            var = tk.BooleanVar(value=s not in black)
-            self.flt_vars[s] = var
-            ttk.Checkbutton(self.flt_grid, text=s, variable=var,
-                            command=lambda s=s: self._toggle_filter(s)).grid(
-                row=idx // cols, column=idx % cols, sticky="w", padx=6, pady=1)
+        if not show:
+            ttk.Label(self.flt_inner, style="Dim.TLabel",
+                      text="没有匹配的币种").grid(row=0, column=0, sticky="w")
+        else:
+            cols = 3
+            for idx, s in enumerate(show):
+                var = tk.BooleanVar(value=s not in black)
+                self.flt_vars[s] = var
+                ttk.Checkbutton(self.flt_inner, text=s, variable=var,
+                                command=lambda s=s: self._toggle_filter(s)).grid(
+                    row=idx // cols, column=idx % cols, sticky="w", padx=6, pady=1)
+        self.flt_canvas.yview_moveto(0)
+        self.flt_canvas.configure(scrollregion=self.flt_canvas.bbox("all"))
 
     def _toggle_filter(self, symbol: str) -> None:
         var = self.flt_vars.get(symbol)
@@ -1399,22 +1426,21 @@ class App:
         for var in self.flt_vars.values():
             var.set(allowed)
         if allowed:
-            for s in list((SF.load().get("blacklist") or {}).keys()):
+            for s in list(self.flt_vars):
                 SF.unblock(s)
-            self._append("已全部允许", "info", self.slog)
+            self._append(f"已允许当前 {len(self.flt_vars)} 个", "info", self.slog)
         else:
             for s in self.flt_vars:
                 SF.block(s, "手动全不选", days=0)
-            self._append("已全部拉黑", "warn", self.slog)
+            self._append(f"已拉黑当前 {len(self.flt_vars)} 个", "warn", self.slog)
 
     def reload_filter_candidates(self) -> None:
-        self._append("正在拉取涨幅榜候选…", "info", self.slog)
+        self._append("正在拉取全部合约…", "info", self.slog)
         threading.Thread(target=self._reload_filter_worker, daemon=True).start()
 
     def _reload_filter_worker(self) -> None:
         try:
-            import strategy_run as SR
-            syms = SR.scan_universe(SC.load())
+            syms = SF.list_all(force=True)
             err = ""
         except Exception as e:  # noqa: BLE001
             syms, err = [], str(e)[:80]
@@ -1422,9 +1448,9 @@ class App:
         def done() -> None:
             self._render_filter_checks(syms)
             if err:
-                self._append(f"候选拉取失败：{err}", "danger", self.slog)
+                self._append(f"刷新失败：{err}", "danger", self.slog)
             else:
-                self._append(f"候选已刷新：{len(syms)} 个", "info", self.slog)
+                self._append(f"合约列表已刷新：{len(syms)} 个", "info", self.slog)
 
         self.root.after(0, done)
 

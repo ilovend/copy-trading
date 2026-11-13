@@ -29,6 +29,43 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 PATH = Path(__file__).resolve().parent / "data" / "symbol-filter.json"
+ALL_PATH = Path(__file__).resolve().parent / "data" / "symbols-all.json"
+
+
+def list_all(force: bool = False, max_age_h: float = 24.0) -> list[str]:
+    """全部可交易的 USDT 永续合约，按 24h 成交额降序。
+
+    结果缓存到 bot/data/symbols-all.json，默认 24 小时刷新一次。
+    """
+    if not force:
+        try:
+            data = json.loads(ALL_PATH.read_text(encoding="utf-8"))
+            if (time.time() - float(data.get("ts") or 0)) < max_age_h * 3600:
+                syms = data.get("symbols") or []
+                if syms:
+                    return list(syms)
+        except Exception:  # noqa: BLE001
+            pass
+    from net import http_json
+    info = http_json("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=20)
+    tick = {}
+    try:
+        for row in http_json("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=20):
+            tick[row.get("symbol")] = float(row.get("quoteVolume") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    syms = [s["symbol"] for s in info.get("symbols", [])
+            if s.get("contractType") == "PERPETUAL"
+            and s.get("quoteAsset") == "USDT"
+            and s.get("status") == "TRADING"]
+    syms.sort(key=lambda s: -tick.get(s, 0))
+    try:
+        ALL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ALL_PATH.write_text(json.dumps({"ts": int(time.time()), "symbols": syms},
+                                       ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return syms
 
 
 def _today() -> str:
