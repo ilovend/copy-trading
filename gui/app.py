@@ -1316,6 +1316,9 @@ class App:
         name = self._preset_labels.get(self.cb_sg_preset.get(), "scalp")
         self.sg_cfg = SC.apply_preset(SC.load(), name)
         self._sg_fill(self.sg_cfg)
+        spec = REG.get(str(self.sg_cfg.get("strategy") or "fade"))
+        if spec:
+            self.var_sg_title.set(f"{spec.name}  ·  {self.cb_sg_preset.get()}")
         self._append(f"已载入预设「{self.cb_sg_preset.get()}」，"
                      f"点「保存参数」或「启动」后生效", "info", self.slog)
 
