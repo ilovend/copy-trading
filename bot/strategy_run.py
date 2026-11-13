@@ -252,6 +252,7 @@ class Runner:
             "bar_age_s": round(now - latest / 1000, 1) if latest else None,
             "stats": dict(self.engine.stats),
             "realized_today": round(self.engine.realized_today, 3),
+            "symbols": sorted(self.universe)[:60],
         }
         try:
             tmp = STATUS_PATH.with_suffix(".tmp")

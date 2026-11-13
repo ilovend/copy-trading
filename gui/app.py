@@ -1276,41 +1276,26 @@ class App:
         ttk.Label(parent, text="合约过滤（偏好合约）", style="Section.TLabel").pack(
             anchor="w", pady=(14, 4))
         ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
-            "白名单非空时只做名单里的币；黑名单当天不做（垂直拉升会自动拉黑，次日解除）。"
-            "逗号分隔，例如 AKEUSDT,BARDUSDT。改完点「保存名单」，重启策略后生效。"
+            "勾选 = 允许交易，取消勾选 = 加入黑名单（永久，重新勾选即可恢复）。"
+            "垂直拉升会自动拉黑、次日自动恢复；默认全选。"
         )).pack(anchor="w")
-        flt = ttk.LabelFrame(parent, text="白名单 / 黑名单", padding=10)
+        flt = ttk.LabelFrame(parent, text="候选合约（默认全选）", padding=10)
         flt.pack(fill="x", pady=(4, 0))
-        row1 = ttk.Frame(flt)
-        row1.pack(fill="x")
-        ttk.Label(row1, text="白名单").pack(side="left")
-        self.var_flt_white = tk.StringVar()
-        ttk.Entry(row1, textvariable=self.var_flt_white).pack(
-            side="left", fill="x", expand=True, padx=(6, 0))
-        row2 = ttk.Frame(flt)
-        row2.pack(fill="x", pady=(6, 0))
-        ttk.Label(row2, text="黑名单").pack(side="left")
-        self.var_flt_black = tk.StringVar()
-        ttk.Entry(row2, textvariable=self.var_flt_black).pack(
-            side="left", fill="x", expand=True, padx=(6, 0))
         fb = ttk.Frame(flt)
-        fb.pack(fill="x", pady=(8, 0))
-        ttk.Button(fb, text="保存名单", command=self.save_symbol_filter).pack(side="left")
-        ttk.Button(fb, text="刷新", command=self.refresh_symbol_filter).pack(
-            side="left", padx=6)
-        ttk.Button(fb, text="清空黑名单",
-                   command=self.clear_symbol_blacklist).pack(side="left")
-        self.flt_tree = ttk.Treeview(flt, columns=("symbol", "status", "reason"),
-                                     show="headings", height=4)
-        self.flt_tree.heading("symbol", text="币种")
-        self.flt_tree.heading("status", text="状态")
-        self.flt_tree.heading("reason", text="原因 / 期限")
-        self.flt_tree.column("symbol", width=150, anchor="w")
-        self.flt_tree.column("status", width=90, anchor="w")
-        self.flt_tree.column("reason", width=440, anchor="w")
-        self.flt_tree.pack(fill="x", pady=(8, 0))
-        self.refresh_symbol_filter()
-
+        fb.pack(fill="x")
+        ttk.Button(fb, text="重载候选",
+                   command=self.reload_filter_candidates).pack(side="left")
+        ttk.Button(fb, text="全选",
+                   command=lambda: self.set_all_filters(True)).pack(side="left", padx=6)
+        ttk.Button(fb, text="全不选",
+                   command=lambda: self.set_all_filters(False)).pack(side="left")
+        ttk.Button(fb, text="刷新",
+                   command=self.refresh_filter_checks).pack(side="left", padx=6)
+        self.flt_grid = ttk.Frame(flt)
+        self.flt_grid.pack(fill="x", pady=(8, 0))
+        self.flt_vars: dict[str, tk.BooleanVar] = {}
+        self._filter_symbols: list[str] = []
+        self.refresh_filter_checks()
         btns = ttk.Frame(parent)
         btns.pack(fill="x", pady=(12, 0))
         ttk.Button(btns, text="保存参数", command=self.save_strategy_cfg).pack(side="left")
@@ -1368,40 +1353,80 @@ class App:
                      f"单笔 {cfg['trade']['notional']}U", "ok")
         return True
 
-    def refresh_symbol_filter(self) -> None:
-        """把当前白/黑名单回填到输入框和表格。"""
-        data = SF.load()
-        self.var_flt_white.set(",".join(data.get("whitelist") or []))
-        black = data.get("blacklist") or {}
-        self.var_flt_black.set(",".join(black))
-        for i in self.flt_tree.get_children():
-            self.flt_tree.delete(i)
-        for s in data.get("whitelist") or []:
-            self.flt_tree.insert("", "end", values=(s, "白名单", ""))
-        for s, v in black.items():
-            until = v.get("until") or "永久"
-            self.flt_tree.insert("", "end",
-                                 values=(s, "黑名单", f"{v.get('reason', '')}（至 {until}）"))
+    def refresh_filter_checks(self) -> None:
+        """按当前候选 + 黑名单重建勾选列表。"""
+        syms: list[str] = []
+        try:
+            status = ROOT / "bot" / "data" / "strategy-status.json"
+            data = json.loads(status.read_text(encoding="utf-8"))
+            syms = list(data.get("symbols") or [])
+        except Exception:  # noqa: BLE001
+            syms = []
+        black = list((SF.load().get("blacklist") or {}).keys())
+        self._render_filter_checks(list(dict.fromkeys(syms + black)))
 
-    def save_symbol_filter(self) -> None:
-        white = [x.strip().upper() for x in self.var_flt_white.get().split(",") if x.strip()]
-        black = [x.strip().upper() for x in self.var_flt_black.get().split(",") if x.strip()]
-        SF.set_whitelist(white)
-        cur = SF.load().get("blacklist") or {}
-        for s in list(cur):
-            if s not in black:
+    def _render_filter_checks(self, syms: list[str]) -> None:
+        self._filter_symbols = list(syms)
+        for w in self.flt_grid.winfo_children():
+            w.destroy()
+        self.flt_vars = {}
+        if not syms:
+            ttk.Label(self.flt_grid, style="Dim.TLabel",
+                      text="暂无候选：点「重载候选」，或先启动一次策略").grid(
+                row=0, column=0, sticky="w")
+            return
+        black = SF.load().get("blacklist") or {}
+        cols = 3 if len(syms) > 12 else 2
+        for idx, s in enumerate(syms):
+            var = tk.BooleanVar(value=s not in black)
+            self.flt_vars[s] = var
+            ttk.Checkbutton(self.flt_grid, text=s, variable=var,
+                            command=lambda s=s: self._toggle_filter(s)).grid(
+                row=idx // cols, column=idx % cols, sticky="w", padx=6, pady=1)
+
+    def _toggle_filter(self, symbol: str) -> None:
+        var = self.flt_vars.get(symbol)
+        if var is None:
+            return
+        if var.get():
+            SF.unblock(symbol)
+            self._append(f"已允许 {symbol}", "ok", self.slog)
+        else:
+            SF.block(symbol, "手动取消勾选", days=0)
+            self._append(f"已拉黑 {symbol}（重新勾选可恢复）", "warn", self.slog)
+
+    def set_all_filters(self, allowed: bool) -> None:
+        for var in self.flt_vars.values():
+            var.set(allowed)
+        if allowed:
+            for s in list((SF.load().get("blacklist") or {}).keys()):
                 SF.unblock(s)
-        for s in black:
-            if s not in cur:
-                SF.block(s, "手动", days=1)
-        self.refresh_symbol_filter()
-        self._append(f"合约过滤已保存：白名单 {len(white)} 个 · 黑名单 {len(black)} 个",
-                     "ok", self.slog)
+            self._append("已全部允许", "info", self.slog)
+        else:
+            for s in self.flt_vars:
+                SF.block(s, "手动全不选", days=0)
+            self._append("已全部拉黑", "warn", self.slog)
 
-    def clear_symbol_blacklist(self) -> None:
-        n = SF.clear_blacklist()
-        self.refresh_symbol_filter()
-        self._append(f"已清空黑名单 {n} 个", "info", self.slog)
+    def reload_filter_candidates(self) -> None:
+        self._append("正在拉取涨幅榜候选…", "info", self.slog)
+        threading.Thread(target=self._reload_filter_worker, daemon=True).start()
+
+    def _reload_filter_worker(self) -> None:
+        try:
+            import strategy_run as SR
+            syms = SR.scan_universe(SC.load())
+            err = ""
+        except Exception as e:  # noqa: BLE001
+            syms, err = [], str(e)[:80]
+
+        def done() -> None:
+            self._render_filter_checks(syms)
+            if err:
+                self._append(f"候选拉取失败：{err}", "danger", self.slog)
+            else:
+                self._append(f"候选已刷新：{len(syms)} 个", "info", self.slog)
+
+        self.root.after(0, done)
 
     def start_strategy(self) -> None:
         if not self.save_strategy_cfg():
