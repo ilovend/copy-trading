@@ -46,6 +46,23 @@ LOCK_PORT = 47613      # 单实例锁：端口被占说明已有策略在跑
 _LOCK_SOCK = None
 
 
+def _atr_pct(bars, n: int = 14) -> float:
+    """1m ATR / 最新收盘 × 100，供追踪回撤自适应使用。"""
+    if not bars:
+        return 0.0
+    trs = []
+    prev = None
+    for b in list(bars)[-(n + 1):]:
+        hi, lo, cl = b["h"], b["l"], b["c"]
+        tr = hi - lo if prev is None else max(hi - lo, abs(hi - prev), abs(lo - prev))
+        trs.append(tr)
+        prev = cl
+    last_close = float(list(bars)[-1]["c"])
+    if not trs or last_close <= 0:
+        return 0.0
+    return (sum(trs[-n:]) / len(trs[-n:])) / last_close * 100
+
+
 def acquire_single_instance() -> None:
     """防止重复启动（GUI 连点、GUI + 命令行并存）导致双份下单。"""
     global _LOCK_SOCK
