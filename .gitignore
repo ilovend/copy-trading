@@ -36,3 +36,6 @@ Binance-Join-CopyTrader-Automation/
 dist/
 release/
 
+
+gui/*.bak-*
+gui/*.json.bak*
