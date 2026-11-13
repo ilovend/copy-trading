@@ -39,3 +39,6 @@ release/
 
 gui/*.bak-*
 gui/*.json.bak*
+
+reports/
+
