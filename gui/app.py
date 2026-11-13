@@ -1122,6 +1122,7 @@ class App:
                   ("1h 涨幅阈值 %", "fade.entry_pct"),
                   ("15m 涨幅阈值 %", "fade.entry_15m_pct"),
                   ("回看分钟", "fade.lookback_min"),
+                  ("做多放量倍数", "fade.long_vol_mult"),
                   ("每笔名义 (U)", "basket.notional"),
                   ("加仓步长 %", "basket.add_step_pct"),
                   ("最多加仓次数", "basket.max_adds"),
