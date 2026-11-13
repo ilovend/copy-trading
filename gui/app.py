@@ -1218,6 +1218,7 @@ class App:
         preset_box = ttk.LabelFrame(parent, text="参数预设", padding=10)
         preset_box.pack(fill="x")
         self._preset_labels = {"复刻带单员：暴涨做空 + 有限加仓": "fade",
+                               "宽止盈实验（TP4/SL6，5 天复核为正）": "fade_wide",
                                "复刻（首跑实盘：5U×3 笔、单币）": "fade_live",
                                "激进·100U（10U×6、日亏≤15U）": "aggr_100",
                                "激进·500U（20U×6、日亏≤30U）": "aggr_500"}
