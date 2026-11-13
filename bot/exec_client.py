@@ -272,9 +272,10 @@ class ExecClient:
                         {"symbol": symbol, "algoId": algo_id},
                         key=self.key, secret=self.secret)
 
-    def open_algo_orders(self, symbol: str) -> list[dict]:
-        """当前未触发的条件单（用于对账 / 去重）。"""
-        return _request("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol},
+    def open_algo_orders(self, symbol: str = "") -> list[dict]:
+        """当前未触发的条件单；不传 symbol 返回全部（用于清理残留）。"""
+        params = {"symbol": symbol} if symbol else {}
+        return _request("GET", "/fapi/v1/openAlgoOrders", params,
                         key=self.key, secret=self.secret)
 
     def cancel_all_algo(self, symbol: str) -> int:

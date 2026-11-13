@@ -508,8 +508,20 @@ class StrategyEngine:
             self._ex_client().cancel(symbol, order_id)
         except Exception:  # noqa: BLE001
             pass
-        filled = self._filled_of(symbol, order_id)
-        return filled if filled and filled[0] > 0 else (0.0, 0.0)
+        if filled and filled[0] > 0:
+            return filled
+        # 兜底：撤单与成交存在竞态，订单状态可能查不到，但仓位已经开了
+        try:
+            for r in self._ex_client().positions():
+                if r.get("symbol") == symbol:
+                    amt = abs(float(r.get("positionAmt") or 0))
+                    if amt > 0:
+                        px = float(r.get("entryPrice") or 0) or fallback_px
+                        log(f"⚠ {symbol} 撤单时已成交 {amt:g} @ {px:g}，按成交处理")
+                        return amt, px
+        except Exception:  # noqa: BLE001
+            pass
+        return 0.0, 0.0
 
     def _order_status(self, symbol: str, order_id) -> str:
         if not order_id:
@@ -900,6 +912,31 @@ class StrategyEngine:
                      f"{reason} 净盈亏 {pnl:+.3f}U" if pnl is not None
                      else f"✅ {symbol} 交易所已平，状态已清理")
         self._save_state()
+
+    def sweep_orphan_algo(self) -> None:
+        """清理没有对应持仓的残留条件单（手动平仓/进程停掉时留下的）。"""
+        if self.mode != "live":
+            return
+        try:
+            ex = self._ex_client()
+            rows = ex.open_algo_orders()
+            live = {p["symbol"]: abs(float(p.get("positionAmt") or 0))
+                    for p in ex.positions()}
+        except Exception as e:  # noqa: BLE001
+            log(f"清理残留条件单失败: {e}")
+            return
+        n = 0
+        for r in rows:
+            sym = str(r.get("symbol") or "")
+            if not sym or live.get(sym, 0) > 0 or sym in self.positions:
+                continue
+            try:
+                ex.cancel_algo(sym, r.get("algoId"))
+                n += 1
+            except Exception:  # noqa: BLE001
+                pass
+        if n:
+            log(f"清理残留条件单 {n} 张（无对应持仓）")
 
     def _reconcile(self) -> None:
         """交易所已无持仓（手动平/强平）时，清理本地状态，避免幽灵仓位。"""

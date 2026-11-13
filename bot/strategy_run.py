@@ -425,6 +425,7 @@ class Runner:
         await asyncio.to_thread(self.engine.load_filters)
         await asyncio.to_thread(self._scan_and_prefill)
         await asyncio.to_thread(self.engine.restore_open)
+        await asyncio.to_thread(self.engine.sweep_orphan_algo)
 
         try:
             from listen_copy import tg_send
@@ -470,6 +471,7 @@ class Runner:
                 log("停止中，平掉策略持仓")
                 await asyncio.to_thread(self.engine.close_all,
                                         dict(self.prices), "shutdown")
+            await asyncio.to_thread(self.engine.sweep_orphan_algo)
             log(f"策略已停止。{self.engine.summary()}")
 
 
