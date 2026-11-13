@@ -1350,6 +1350,8 @@ class App:
         ttk.Button(btns, text="停止", command=self.stop_strategy).pack(side="left")
         ttk.Button(btns, text="回放最近 500 根", command=lambda: self.replay_strategy(500)
                    ).pack(side="left", padx=8)
+        ttk.Button(btns, text="生成对比报表",
+                   command=self.report_compare).pack(side="left", padx=8)
         ttk.Label(btns, style="Dim.TLabel", text="回放只读，不会下单").pack(
             side="left", padx=6)
 
@@ -1538,6 +1540,27 @@ class App:
     def stop_strategy(self) -> None:
         self.stop_job("strategy")
         self.stop_job("replay")
+
+    def report_compare(self) -> None:
+        """生成本地实盘/干跑对比报表（xlsx + csv）。"""
+        script = ROOT / "bot" / "report_compare.py"
+        py = sys.executable
+        if py.lower().endswith("pythonw.exe"):
+            cand = Path(py).with_name("python.exe")
+            if cand.exists():
+                py = str(cand)
+        try:
+            r = subprocess.run([py, str(script), "--days", "7"],
+                               cwd=str(ROOT), capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=180)
+        except Exception as e:  # noqa: BLE001
+            self._append(f"报表生成失败: {e}", "danger", self.slog)
+            return
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        self._append(out or "报表生成完成",
+                     "ok" if r.returncode == 0 else "danger", self.slog)
+        if r.returncode == 0:
+            self._append("文件在 reports/ 目录（xlsx + csv）", "info", self.slog)
 
     def replay_strategy(self, bars: int) -> None:
         if not self.save_strategy_cfg():

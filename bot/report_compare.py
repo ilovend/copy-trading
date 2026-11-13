@@ -212,15 +212,35 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         w.writerows(rows)
 
 
+def _ensure_openpyxl() -> bool:
+    """优先当前解释器；没有就找 DSH 运行时里的 openpyxl。"""
+    try:
+        import openpyxl  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    bases = [Path.home() / ".dsh" / "dsh-runtimes"]
+    for base in bases:
+        for site in base.glob("*/dependencies/python/Lib/site-packages"):
+            if not (site / "openpyxl").exists():
+                continue
+            sys.path.append(str(site))
+            try:
+                import openpyxl  # noqa: F401
+                return True
+            except ImportError:
+                sys.path.pop()
+    return False
+
+
 def write_xlsx(path: Path, summary: list[dict], detail: list[dict],
                compare: list[dict]) -> None:
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Alignment, Font, PatternFill
-        from openpyxl.utils import get_column_letter
-    except ImportError:
+    if not _ensure_openpyxl():
         print("未安装 openpyxl，跳过 Excel（CSV 已生成）")
         return
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     head_fill = PatternFill("solid", fgColor="1F4E78")
