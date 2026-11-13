@@ -30,6 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bot"))
 
+import bapi  # noqa: E402
 import listen_copy as L  # noqa: E402
 
 CONFIG_PATH = ROOT / "gui" / "autojoin_config.json"
@@ -41,7 +42,7 @@ class Api:
 
     def __init__(self) -> None:
         self.conn: http.client.HTTPSConnection | None = None
-        self.headers = {**L.HEADERS, "connection": "keep-alive"}
+        self.headers = {**bapi.HEADERS, "connection": "keep-alive"}
 
     def _new(self) -> http.client.HTTPSConnection:
         self.conn = http.client.HTTPSConnection("www.binance.com", timeout=10)
@@ -135,7 +136,7 @@ def main() -> None:
 
     cfg = load_config()
     live = bool(cfg.get("live")) and not args.dry_run
-    interval = float(cfg.get("poll_interval", 1.0) or 1.0)
+    interval = max(0.5, float(cfg.get("poll_interval", 1.0) or 1.0))
     targets = cfg.get("targets") or {}
     defaults = dict(DEFAULT_PARAMS)
     defaults.update(cfg.get("defaults") or {})
@@ -147,14 +148,16 @@ def main() -> None:
     L.load_session()
     api = Api()
     log(f"自动跟单启动 · {'实盘下单' if live else '只提示（dry-run）'} · "
-        f"监控 {len(targets)} 人 · 间隔 {interval:.0f}s")
+        f"监控 {len(targets)} 人 · 间隔 {interval:g}s")
     names = "、".join(t.get("nickname") or k for k, t in targets.items())
     L.tg_send_async(f"🟢 自动跟单已启动（{'实盘' if live else '只提示'}）\n"
               f"监控 {len(targets)} 人：{names}\n"
-              f"每 {interval:.0f} 秒检查一次名额，出现空位会立刻通知。")
+              f"每 {interval:g} 秒检查一次名额，出现空位会立刻通知。")
 
     joined: set[str] = set()
     announced: set[str] = set()
+    failed_until: dict[str, float] = {}
+    failed_once: set[str] = set()
 
     while True:
         try:
@@ -168,8 +171,13 @@ def main() -> None:
         for lead_id, tcfg in targets.items():
             if lead_id in joined:
                 continue
+            if time.time() < failed_until.get(lead_id, 0):
+                continue
             row = by_id.get(lead_id)
             if not row:
+                continue
+            if row.get("hasCopy"):
+                joined.add(lead_id)
                 continue
             cur, mx = row.get("currentCopyCount"), row.get("maxCopyCount")
             nickname = row.get("nickname") or tcfg.get("nickname") or lead_id
@@ -197,8 +205,12 @@ def main() -> None:
                 L.tg_send_async(f"✅ 自动跟单成功\n{nickname}\n投入 {params['investAmount']} U")
                 joined.add(lead_id)
             else:
-                log(f"❌ 加入失败 {nickname}: {msg}")
-                L.tg_send_async(f"❌ 自动跟单失败\n{nickname}\n{msg}\n请手动处理")
+                # 失败后退避 30 秒，且只推一次 TG，避免每 0.5 秒刷屏
+                failed_until[lead_id] = time.time() + 30
+                log(f"❌ 加入失败 {nickname}: {msg}（30 秒后重试）")
+                if lead_id not in failed_once:
+                    failed_once.add(lead_id)
+                    L.tg_send_async(f"❌ 自动跟单失败\n{nickname}\n{msg}\n请手动处理")
 
         if len(joined) >= len(targets):
             log("监控名单已全部处理完，退出")

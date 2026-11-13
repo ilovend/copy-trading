@@ -1,5 +1,24 @@
 # 更新日志
 
+## v1.16.2（2026-11-13）
+
+修自动跟单崩溃：`AttributeError: module 'listen_copy' has no attribute 'HEADERS'`。
+
+### 根因
+
+P2 把登录态抽到 `bapi.py` 后，`listen_copy` 不再导出 `HEADERS`；
+`auto_join.Api` 仍在用 `L.HEADERS`，一启动就崩。
+
+### 修复 / 改进
+
+- `auto_join` 改用 `bapi.HEADERS`（`load_session` 后取最新）
+- 加入失败后 **退避 30 秒**、TG 只推一次，避免每 0.5 秒刷屏
+- 已跟单的带单员（`hasCopy`）直接跳过，不重复尝试
+- 间隔显示改为 `0.5s`（原来 `:.0f` 显示成 0），并强制最小 0.5 秒
+- 实测 `--dry-run` 正常启动：监控 1 人（熬鹰资本），当前 1000/1000 满员，等待名额
+
+---
+
 ## v1.16.1（2026-11-13）
 
 合约过滤改为「全部合约」列表，不再只显示当前候选。
