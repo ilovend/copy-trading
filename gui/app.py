@@ -47,6 +47,10 @@ class App:
         self.root = root
         self.jobs: dict[str, subprocess.Popen] = {}
         self.q: queue.Queue = queue.Queue()
+        self.var_log_pause = tk.BooleanVar(value=False)
+        self.var_log_err = tk.StringVar(value="异常 0")
+        self._err_count = 0
+        self._err_labels: list[ttk.Label] = []
         self.rows: list[dict] = []
         self.monitored: set[str] = set()
         self.copied: set[str] = set()
@@ -123,7 +127,7 @@ class App:
         cols = ("name", "lead", "copy", "mb", "mon", "cp")
         self.tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="extended")
         for c, t, w in (("name", "带单员", 140), ("lead", "带单员ID", 175),
-                        ("copy", "我的组合ID", 175), ("mb", "保证金余额", 100),
+                        ("copy", "我的组合ID", 175), ("mb", "保证金余额 (USDT)", 120),
                         ("mon", "监控", 60), ("cp", "复制", 60)):
             self.tree.heading(c, text=t)
             self.tree.column(c, width=w, anchor="w" if c == "name" else "center")
@@ -169,6 +173,7 @@ class App:
             "· WebSocket 走 /private/stream，实测延迟约 100ms。\n"
             "· Ctrl / Shift 可多选带单员。\n"
             "· 登录态 2–3 天过期一次，点「更新登录态」即可。\n"
+            "· 保证金余额单位为 USDT；账户总权益以复制页「执行资金」为准。\n"
             "· 推送渠道在「仓位推送」页配置。"
         )).pack(anchor="w")
 
@@ -176,6 +181,7 @@ class App:
         logframe.pack(fill="both", expand=True)
         self.log = tk.Text(logframe, height=9, wrap="none", font=(theme.MONO, 10),
                            relief="flat", borderwidth=0, padx=8, pady=6)
+        self._log_toolbar(logframe, self.log)
         lsb = ttk.Scrollbar(logframe, orient="vertical", command=self.log.yview)
         self.log.configure(yscrollcommand=lsb.set)
         self.log.pack(side="left", fill="both", expand=True)
@@ -1398,6 +1404,7 @@ class App:
         logframe.pack(fill="both", expand=True, pady=(12, 0))
         self.slog = tk.Text(logframe, height=11, wrap="none", font=(theme.MONO, 10),
                             relief="flat", borderwidth=0, padx=8, pady=6)
+        self._log_toolbar(logframe, self.slog)
         ssb = ttk.Scrollbar(logframe, orient="vertical", command=self.slog.yview)
         self.slog.configure(yscrollcommand=ssb.set)
         self.slog.pack(side="left", fill="both", expand=True)
@@ -2070,10 +2077,39 @@ class App:
             return "ok"
         return "info"
 
+    def _log_toolbar(self, parent: ttk.Frame, widget: tk.Text) -> None:
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", pady=(0, 4))
+        ttk.Button(bar, text="清空", width=6,
+                   command=lambda: self._clear_log(widget)).pack(side="left")
+        ttk.Checkbutton(bar, text="暂停滚动",
+                        variable=self.var_log_pause).pack(side="left", padx=8)
+        lbl = ttk.Label(bar, textvariable=self.var_log_err, style="Dim.TLabel")
+        lbl.pack(side="right")
+        self._err_labels.append(lbl)
+
+    def _clear_log(self, widget: tk.Text) -> None:
+        widget.delete("1.0", "end")
+        self._err_count = 0
+        self._update_err_badge()
+
+    def _update_err_badge(self) -> None:
+        self.var_log_err.set(f"异常 {self._err_count}")
+        style = "Danger.TLabel" if self._err_count else "Dim.TLabel"
+        for lbl in self._err_labels:
+            try:
+                lbl.configure(style=style)
+            except Exception:  # noqa: BLE001
+                pass
+
     def _append(self, line: str, tag: str = "info", widget: tk.Text | None = None) -> None:
         target = widget or self.log
         target.insert("end", line + "\n", tag)
-        target.see("end")
+        if tag == "err":
+            self._err_count += 1
+            self._update_err_badge()
+        if not self.var_log_pause.get():
+            target.see("end")
         try:
             LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
             with LOG_PATH.open("a", encoding="utf-8") as f:
