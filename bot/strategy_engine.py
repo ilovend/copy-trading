@@ -115,6 +115,12 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         self._lev_set: set[str] = set()
         self.basket = cfg.get("basket") or {}
         self.basket_on = bool(self.basket.get("enabled"))
+        # 安全兜底：fade 且止损设成 ≥50%（等于没有止损）时，强制启用均价止盈止损
+        _sid = str(cfg.get("strategy") or "").lower()
+        _sl = float(self.trade.get("sl_pct", 0) or 0)
+        if (_sid == "fade" or (not _sid and (cfg.get("fade") or {}).get("enabled"))) \
+                and _sl >= 50:
+            self.basket_on = True
         self.protect_on = bool(self.basket.get("protect", True))
         self._symbol_stop: dict[str, dict] = {}
 

@@ -19,6 +19,7 @@ import tempfile
 import webbrowser
 import sys
 import threading
+import time
 import tkinter as tk
 import urllib.parse
 import urllib.request
@@ -1160,6 +1161,10 @@ class App:
         except Exception:  # noqa: BLE001
             pass
         self._render_sg_fields(self.sg_cfg)
+        # 模式开关与策略保持一致
+        self.var_sg_fade.set(sid == "fade")
+        self.var_sg_basket.set(sid == "fade")
+        self.var_sg_setup.set(sid == "two_stage")
         self._append(f"已切换策略：{spec.name}", "info", self.slog)
 
     def _sg_fill(self, cfg: dict) -> None:
@@ -1380,13 +1385,18 @@ class App:
         return True
 
     def refresh_filter_checks(self) -> None:
-        """从缓存加载全部合约并重建勾选列表。"""
+        """先用本地缓存渲染；没有缓存或已过期则后台刷新，不阻塞界面。"""
+        syms: list[str] = []
+        fresh = False
         try:
-            syms = SF.list_all()
-        except Exception as e:  # noqa: BLE001
-            syms = []
-            self._append(f"合约列表加载失败：{str(e)[:80]}", "danger", self.slog)
+            data = json.loads(SF.ALL_PATH.read_text(encoding="utf-8"))
+            syms = list(data.get("symbols") or [])
+            fresh = (time.time() - float(data.get("ts") or 0)) < 24 * 3600
+        except Exception:  # noqa: BLE001
+            syms, fresh = [], False
         self._render_filter_checks(syms)
+        if not fresh:
+            self.root.after(150, self.reload_filter_candidates)
 
     def _schedule_filter_render(self) -> None:
         if self._flt_after:
@@ -1469,7 +1479,8 @@ class App:
         if cfg.get("mode") == "live":
             trade = cfg.get("trade") or {}
             basket = cfg.get("basket") or {}
-            if basket.get("enabled"):
+            sid = cfg.get("strategy") or "fade"
+            if sid == "fade" or basket.get("enabled"):
                 detail = (f"均价止盈 {basket.get('basket_tp_pct')}% / "
                           f"硬止损 {basket.get('hard_stop_pct')}%\n"
                           f"逆行 {basket.get('add_step_pct')}% 加仓，最多 "
@@ -1478,7 +1489,8 @@ class App:
                 detail = (f"止盈 {trade.get('tp1_pct')}% / 止损 {trade.get('sl_pct')}%")
             if not messagebox.askokcancel(
                     "确认实盘",
-                    f"策略将以实盘模式运行：单笔 {trade.get('notional')}U\n"
+                    f"策略「{REG.get(sid).name if REG.get(sid) else sid}」"
+                    f"将以实盘模式运行：单笔 {trade.get('notional')}U\n"
                     f"{detail}\n"
                     f"同时最多 {trade.get('max_positions')} 个币 · "
                     f"日亏上限 {trade.get('max_daily_loss')}U\n\n继续？"):

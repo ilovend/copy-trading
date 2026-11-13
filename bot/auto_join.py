@@ -167,7 +167,7 @@ def main() -> None:
             time.sleep(interval)
             continue
 
-        by_id = {r["leadPortfolioId"]: r for r in rows}
+        by_id = {r["leadPortfolioId"]: r for r in rows if r.get("leadPortfolioId")}
         for lead_id, tcfg in targets.items():
             if lead_id in joined:
                 continue
@@ -179,7 +179,11 @@ def main() -> None:
             if row.get("hasCopy"):
                 joined.add(lead_id)
                 continue
-            cur, mx = row.get("currentCopyCount"), row.get("maxCopyCount")
+            try:
+                cur = int(row.get("currentCopyCount"))
+                mx = int(row.get("maxCopyCount"))
+            except (TypeError, ValueError):
+                continue
             nickname = row.get("nickname") or tcfg.get("nickname") or lead_id
             if cur is None or mx is None or cur >= mx:
                 continue

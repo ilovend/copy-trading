@@ -49,8 +49,14 @@ FALLBACK_PID = os.environ.get("COPY_PORTFOLIO_ID", "")
 # 登录态与 bapi 已抽到 bapi.py
 import bapi  # noqa: E402
 
-SESSION = bapi.SESSION
 SESSION_PATH = bapi.SESSION_PATH
+
+
+def __getattr__(name: str):
+    """兼容旧代码：SESSION / HEADERS 始终取 bapi 的最新值。"""
+    if name in ("SESSION", "HEADERS", "SESSION_MTIME", "DEFAULT_UA"):
+        return getattr(bapi, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def api(path: str, method: str = "POST", body: dict | None = None) -> dict:

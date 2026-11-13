@@ -138,6 +138,8 @@ class Runner:
                     if int(bars[-1]["t"]) + step_ms > time.time() * 1000:
                         bars = bars[:-1]
                 self.bars[sym] = deque(bars, maxlen=BARS_KEEP)
+                if bars:
+                    self._last_sig_t[sym] = int(bars[-1]["t"])
             except Exception as e:  # noqa: BLE001
                 log(f"预取 {sym} 失败: {e}")
 
@@ -425,6 +427,9 @@ class Runner:
             f"追踪={trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp "
             f"加仓={trade.get('max_adds')}次/{trade.get('add_window_s')}s "
             f"最长持仓={trade.get('max_hold_s')}s")
+        log(f"策略：{self.sid} · 方向 {self.cfg.get('direction', 'short')}")
+        if self.sid != "fade" and str(self.cfg.get("direction", "short")) != "short":
+            log("⚠ 当前策略只做空，direction 设置被忽略")
         await asyncio.to_thread(self.engine.load_filters)
         await asyncio.to_thread(self._scan_and_prefill)
         await asyncio.to_thread(self.engine.restore_open)
