@@ -18,6 +18,8 @@ import time
 from datetime import datetime, time as dtime
 from pathlib import Path
 
+import ban_list as BANS
+
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "bot" / "data"
 DATA.mkdir(parents=True, exist_ok=True)
@@ -300,6 +302,25 @@ class StrategyEngine:
     def open_short(self, symbol: str, detail: dict, signal_price: float) -> bool:
         self._reset_daily()
         self.stats["signals"] += 1
+        if BANS.is_banned(symbol):
+            self._reject(symbol, "banned", "今日已拉黑（垂直拉升）")
+            return False
+        rw = self.cfg.get("runaway") or {}
+        if rw.get("enabled", True):
+            c1h = float(detail.get("chg_1h") or 0)
+            c15 = float(detail.get("chg_15m") or 0)
+            lim1 = float(rw.get("entry_1h_pct", 20) or 20)
+            lim15 = float(rw.get("entry_15m_pct", 10) or 10)
+            if c1h >= lim1 or c15 >= lim15:
+                why = f"1h {c1h:+.1f}% / 15m {c15:+.1f}%"
+                ok = BANS.ban(symbol, why, int(rw.get("max_bans", 1) or 0))
+                self._reject(symbol, "runaway" if ok else "runaway_full",
+                             f"垂直拉升 {why}，{'' if ok else '拉黑名额已满，'}今日不做")
+                log(f"⛔ {symbol:12s} 垂直拉升 {why} → "
+                    f"{'今日拉黑' if ok else '名额已满，跳过本单'}")
+                self._notify(f"⛔ {symbol} 垂直拉升 {why}\n"
+                             f"{'今日拉黑，不再交易该币' if ok else '拉黑名额已满，本单同样跳过'}")
+                return False
         if self.mode not in ("shadow", "live_dry", "live"):
             self._reject(symbol, "bad_mode", f"未知模式 {self.mode}")
             return False

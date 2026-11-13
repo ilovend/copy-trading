@@ -1125,7 +1125,10 @@ class App:
                   ("最多加仓次数", "basket.max_adds"),
                   ("均价止盈 %", "basket.basket_tp_pct"),
                   ("硬止损 %", "basket.hard_stop_pct"),
-                  ("最长持仓 (秒)", "basket.max_hold_s"))),
+                  ("最长持仓 (秒)", "basket.max_hold_s"),
+                  ("垂直拉升 1h %", "runaway.entry_1h_pct"),
+                  ("垂直拉升 15m %", "runaway.entry_15m_pct"),
+                  ("每日拉黑名额（0=不限）", "runaway.max_bans"))),
     )
 
     @staticmethod
