@@ -1,5 +1,36 @@
 # 更新日志
 
+## v1.12.0（2026-11-13）
+
+把「垂直拉升拉黑」和「偏好合约」合并成统一的**合约过滤器**。
+
+### 新增
+
+- `bot/symbol_filter.py`：统一的白名单 + 黑名单
+  · 白名单非空时只交易白名单内的币（类似币安跟单的「偏好合约」）
+  · 黑名单支持手动拉黑（`--days 0` 永久）
+  · 垂直拉升自动拉黑写入黑名单，`until=当天`，次日自动失效
+  · 数据存 `bot/data/symbol-filter.json`，重启不丢
+- 引擎开仓前统一走 `FILTER.is_allowed()`，拒绝原因记为 `filtered`
+- `bot/ban_list.py` 保留为兼容入口，转发到 `symbol_filter`
+
+### CLI
+
+```bat
+python bot\symbol_filter.py                            :: 查看
+python bot\symbol_filter.py --white AKEUSDT,BARDUSDT   :: 设置白名单
+python bot\symbol_filter.py --block PLAYUSDT           :: 拉黑
+python bot\symbol_filter.py --unblock PLAYUSDT         :: 解除
+python bot\symbol_filter.py --clear-black              :: 清空黑名单
+```
+
+### 实测
+
+- 垂直拉升 AKE（1h +25%）→ 自动拉黑，后续信号 `filtered`
+- 白名单只留 BARD 时，MAGMA 被拒、BARD 正常开仓
+
+---
+
 ## v1.11.1（2026-11-13）
 
 新增「垂直拉升拉黑」：像 AKE 这种不要命拉升的币，当天不再交易，次日自动解除。

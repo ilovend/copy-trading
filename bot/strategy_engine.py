@@ -18,7 +18,8 @@ import time
 from datetime import datetime, time as dtime
 from pathlib import Path
 
-import ban_list as BANS
+import ban_list as _ban_compat  # noqa: F401  兼容旧引用
+import symbol_filter as FILTER
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "bot" / "data"
@@ -302,8 +303,9 @@ class StrategyEngine:
     def open_short(self, symbol: str, detail: dict, signal_price: float) -> bool:
         self._reset_daily()
         self.stats["signals"] += 1
-        if BANS.is_banned(symbol):
-            self._reject(symbol, "banned", "今日已拉黑（垂直拉升）")
+        ok, why = FILTER.is_allowed(symbol)
+        if not ok:
+            self._reject(symbol, "filtered", why)
             return False
         rw = self.cfg.get("runaway") or {}
         if rw.get("enabled", True):
@@ -313,7 +315,13 @@ class StrategyEngine:
             lim15 = float(rw.get("entry_15m_pct", 10) or 10)
             if c1h >= lim1 or c15 >= lim15:
                 why = f"1h {c1h:+.1f}% / 15m {c15:+.1f}%"
-                ok = BANS.ban(symbol, why, int(rw.get("max_bans", 1) or 0))
+                cap = int(rw.get("max_bans", 0) or 0)
+                today_black = len(FILTER.load().get("blacklist") or {})
+                if cap <= 0 or today_black < cap:
+                    FILTER.block(symbol, f"垂直拉升 {why}", days=1)
+                    ok = True
+                else:
+                    ok = False
                 self._reject(symbol, "runaway" if ok else "runaway_full",
                              f"垂直拉升 {why}，{'' if ok else '拉黑名额已满，'}今日不做")
                 log(f"⛔ {symbol:12s} 垂直拉升 {why} → "
