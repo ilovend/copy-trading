@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT / "bot"))
 
 import listen_copy as L
 import strategy_config as SC  # noqa: E402
+import symbol_filter as SF  # noqa: E402
 import theme  # noqa: E402
 from version import __version__ as VERSION  # noqa: E402
 
@@ -1269,6 +1270,44 @@ class App:
             "且新信号价不低于上一笔（做空，越往上加越划算）。"
         )).pack(anchor="w", pady=(6, 0))
 
+        ttk.Label(parent, text="合约过滤（偏好合约）", style="Section.TLabel").pack(
+            anchor="w", pady=(14, 4))
+        ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
+            "白名单非空时只做名单里的币；黑名单当天不做（垂直拉升会自动拉黑，次日解除）。"
+            "逗号分隔，例如 AKEUSDT,BARDUSDT。改完点「保存名单」，重启策略后生效。"
+        )).pack(anchor="w")
+        flt = ttk.LabelFrame(parent, text="白名单 / 黑名单", padding=10)
+        flt.pack(fill="x", pady=(4, 0))
+        row1 = ttk.Frame(flt)
+        row1.pack(fill="x")
+        ttk.Label(row1, text="白名单").pack(side="left")
+        self.var_flt_white = tk.StringVar()
+        ttk.Entry(row1, textvariable=self.var_flt_white).pack(
+            side="left", fill="x", expand=True, padx=(6, 0))
+        row2 = ttk.Frame(flt)
+        row2.pack(fill="x", pady=(6, 0))
+        ttk.Label(row2, text="黑名单").pack(side="left")
+        self.var_flt_black = tk.StringVar()
+        ttk.Entry(row2, textvariable=self.var_flt_black).pack(
+            side="left", fill="x", expand=True, padx=(6, 0))
+        fb = ttk.Frame(flt)
+        fb.pack(fill="x", pady=(8, 0))
+        ttk.Button(fb, text="保存名单", command=self.save_symbol_filter).pack(side="left")
+        ttk.Button(fb, text="刷新", command=self.refresh_symbol_filter).pack(
+            side="left", padx=6)
+        ttk.Button(fb, text="清空黑名单",
+                   command=self.clear_symbol_blacklist).pack(side="left")
+        self.flt_tree = ttk.Treeview(flt, columns=("symbol", "status", "reason"),
+                                     show="headings", height=4)
+        self.flt_tree.heading("symbol", text="币种")
+        self.flt_tree.heading("status", text="状态")
+        self.flt_tree.heading("reason", text="原因 / 期限")
+        self.flt_tree.column("symbol", width=150, anchor="w")
+        self.flt_tree.column("status", width=90, anchor="w")
+        self.flt_tree.column("reason", width=440, anchor="w")
+        self.flt_tree.pack(fill="x", pady=(8, 0))
+        self.refresh_symbol_filter()
+
         btns = ttk.Frame(parent)
         btns.pack(fill="x", pady=(12, 0))
         ttk.Button(btns, text="保存参数", command=self.save_strategy_cfg).pack(side="left")
@@ -1325,6 +1364,41 @@ class App:
         self._append(f"策略参数已保存：{cfg['mode']} · {cfg['interval']} · "
                      f"单笔 {cfg['trade']['notional']}U", "ok")
         return True
+
+    def refresh_symbol_filter(self) -> None:
+        """把当前白/黑名单回填到输入框和表格。"""
+        data = SF.load()
+        self.var_flt_white.set(",".join(data.get("whitelist") or []))
+        black = data.get("blacklist") or {}
+        self.var_flt_black.set(",".join(black))
+        for i in self.flt_tree.get_children():
+            self.flt_tree.delete(i)
+        for s in data.get("whitelist") or []:
+            self.flt_tree.insert("", "end", values=(s, "白名单", ""))
+        for s, v in black.items():
+            until = v.get("until") or "永久"
+            self.flt_tree.insert("", "end",
+                                 values=(s, "黑名单", f"{v.get('reason', '')}（至 {until}）"))
+
+    def save_symbol_filter(self) -> None:
+        white = [x.strip().upper() for x in self.var_flt_white.get().split(",") if x.strip()]
+        black = [x.strip().upper() for x in self.var_flt_black.get().split(",") if x.strip()]
+        SF.set_whitelist(white)
+        cur = SF.load().get("blacklist") or {}
+        for s in list(cur):
+            if s not in black:
+                SF.unblock(s)
+        for s in black:
+            if s not in cur:
+                SF.block(s, "手动", days=1)
+        self.refresh_symbol_filter()
+        self._append(f"合约过滤已保存：白名单 {len(white)} 个 · 黑名单 {len(black)} 个",
+                     "ok", self.slog)
+
+    def clear_symbol_blacklist(self) -> None:
+        n = SF.clear_blacklist()
+        self.refresh_symbol_filter()
+        self._append(f"已清空黑名单 {n} 个", "info", self.slog)
 
     def start_strategy(self) -> None:
         if not self.save_strategy_cfg():
