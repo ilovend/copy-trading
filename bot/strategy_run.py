@@ -446,6 +446,10 @@ class Runner:
             log(f"均价模式：止盈 {b.get('basket_tp_pct')}% / 止损 {b.get('hard_stop_pct')}% / "
                 f"加仓 {b.get('add_step_pct')}%×{b.get('max_adds')} / "
                 f"持仓上限 {b.get('max_hold_s')}s")
+            if float(b.get("trail_activate_pct", 0) or 0) > 0:
+                log(f"追踪止盈：浮盈 {b.get('trail_activate_pct')}% 启动 / "
+                    f"回撤 {b.get('trail_gap_pct')}pp 平")
+
         if self.sid != "fade" and str(self.cfg.get("direction", "short")) != "short":
             log("⚠ 当前策略只做空，direction 设置被忽略")
         await asyncio.to_thread(self.engine.load_filters)

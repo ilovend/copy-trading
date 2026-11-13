@@ -30,6 +30,16 @@ class BasketMixin:
         if pnl <= -hard:
             self._close_partial(symbol, "basket_stop", mark, 1.0)
             return
+        # 浮盈追踪：峰值上移，回撤到线就平（只上不下）
+        trail_act = float(b.get("trail_activate_pct", 0) or 0)
+        trail_gap = float(b.get("trail_gap_pct", 0) or 0)
+        if trail_act > 0 and trail_gap > 0:
+            if pos["peak"] >= trail_act:
+                pos["trail_on"] = True
+                pos["trail_level"] = max(pos["trail_level"], pos["peak"] - trail_gap)
+            if pos["trail_on"] and pnl <= pos["trail_level"]:
+                self._close_partial(symbol, "basket_trail", mark, 1.0)
+                return
         if now - pos["opened_at"] >= hold:
             self._close_partial(symbol, "basket_timeout", mark, 1.0)
             return
