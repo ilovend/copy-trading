@@ -119,7 +119,7 @@ class ProtectMixin:
             mark = self._mark_of(symbol, avg)
             log(f"⚠ {symbol} 止损价 {sl_px:g} 已被击穿（-2021），立即市价平仓")
             self._notify(f"⚠ {symbol} 止损价已被击穿，立即市价平仓")
-            self._close_partial(symbol, "basket_stop", mark, 1.0)
+            self._close_partial(symbol, "basket_stop", mark, 1.0, reprotect=False)
             return
         tp_id = self._place_one_protect(ex, symbol, "TAKE_PROFIT_MARKET", tp_px, ps,
                                        qty=pos["qty"], working_type=tp_work,
@@ -129,7 +129,7 @@ class ProtectMixin:
         elif "-2021" in str(getattr(self, "_protect_err", "")):
             mark = self._mark_of(symbol, avg)
             log(f"⚠ {symbol} 止盈价 {tp_px:g} 已被击穿（-2021），立即市价止盈")
-            self._close_partial(symbol, "basket_tp", mark, 1.0)
+            self._close_partial(symbol, "basket_tp", mark, 1.0, reprotect=False)
             return
         pos["protect"] = ids
         if ids:

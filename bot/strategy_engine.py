@@ -498,7 +498,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         pos["entries"].append({"qty": qty, "price": entry, "ts": time.time()})
         pos["qty"] = sum(e["qty"] for e in pos["entries"])
         pos["avg"] = sum(e["qty"] * e["price"] for e in pos["entries"]) / pos["qty"]
-        if self.mode == "live" and str(self.trade.get("tp_mode", "taker")) == "maker":
+        if (self.mode == "live" and not self.basket_on
+                and str(self.trade.get("tp_mode", "taker")) == "maker"):
             self._place_tp(symbol, pos)
 
         if add:
@@ -573,6 +574,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             self._ex_client().cancel(symbol, order_id)
         except Exception:  # noqa: BLE001
             pass
+        filled = self._filled_of(symbol, order_id)
         if filled and filled[0] > 0:
             return filled
         # 兜底：撤单与成交存在竞态，订单状态可能查不到，但仓位已经开了
@@ -899,7 +901,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         self._save_state()
 
     def _close_partial(self, symbol: str, reason: str, mark: float,
-                       frac: float) -> bool:
+                       frac: float, reprotect: bool = True) -> bool:
         pos = self.positions.get(symbol)
         if not pos:
             return False
@@ -934,6 +936,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                     self._reject(symbol, "close_failed",
                                  f"平仓未成交 status={resp.get('status')}")
                     self._notify(f"🚨 策略平仓失败 {symbol}，请手动处理")
+                    if self.basket_on and reprotect:
+                        self._place_protect(symbol, pos)   # 恢复保护单
                     return False
                 exit_price = float(resp.get("avgPrice") or 0) or px
                 qty = filled
@@ -946,6 +950,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                     return True
                 self._reject(symbol, "close_failed", msg[:160])
                 self._notify(f"🚨 策略平仓失败 {symbol}\n{msg[:150]}")
+                if self.basket_on and reprotect:
+                    self._place_protect(symbol, pos)       # 恢复保护单
                 return False
 
         if reason in ("stop_loss", "basket_stop"):
@@ -968,6 +974,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
 
         if pos["qty"] <= 1e-12:
             self._finalize(symbol, pos, reason)
+        elif self.basket_on and reprotect:
+            self._place_protect(symbol, pos)               # 剩余仓位重新挂保护
         return True
 
     def _finalize(self, symbol: str, pos: dict, reason: str) -> None:

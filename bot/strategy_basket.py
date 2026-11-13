@@ -31,6 +31,9 @@ class BasketMixin:
         adds = len(pos["entries"]) - 1
         last = float(pos.get("last_add_pnl", 0.0))
         if adds < max_adds and (last - pnl) >= step - 1e-9:
+            self._check_halt()
+            if self._halt:          # 当日亏损已熔断：不再加仓放大风险
+                return
             allowed, why = FILTER.is_allowed(symbol)
             if not allowed:
                 if not pos.get("_add_blocked_logged"):

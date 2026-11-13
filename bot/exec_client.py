@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import http.client
 import json
+import secrets
 import os
 import threading
 import time
@@ -71,7 +72,7 @@ def _conn() -> http.client.HTTPSConnection:
 
 def _request(method: str, path: str, params: dict | None = None,
              key: str = "", secret: str = "", signed: bool = True,
-             timeout: int = 10) -> dict:
+             timeout: int = 10, retry: bool = True) -> dict:
     """复用同一条 TLS 连接：实测每次 1–3 秒降到 90ms 左右。
 
     连接是全局共享的，信号/持仓/对账/条件单多个线程都会用，
@@ -92,7 +93,7 @@ def _request(method: str, path: str, params: dict | None = None,
     target = path + (f"?{query}" if query else "")
     with _CONN_LOCK:
         last: Exception | None = None
-        for _ in range(3):
+        for _ in range(3 if retry else 1):
             try:
                 conn = _conn()
                 conn.request(method, target, headers=headers)
@@ -199,6 +200,11 @@ class ExecClient:
                 return {"msg": "no need to change margin type"}
             raise
 
+    def query_order_by_client(self, symbol: str, client_id: str) -> dict:
+        return _request("GET", "/fapi/v1/order",
+                        {"symbol": symbol, "origClientOrderId": client_id},
+                        key=self.key, secret=self.secret)
+
     def order(self, symbol: str, side: str, qty: float, *,
               order_type: str = "MARKET", price: float | None = None,
               time_in_force: str | None = None, reduce_only: bool = False,
@@ -220,7 +226,22 @@ class ExecClient:
         if stop_price is not None:
             params["stopPrice"] = stop_price
         params = {k: v for k, v in params.items() if v is not None}
-        return _request("POST", "/fapi/v1/order", params, key=self.key, secret=self.secret)
+        cid = f"cx{int(time.time() * 1000)}{secrets.randbelow(9000) + 1000}"
+        params["newClientOrderId"] = cid
+        try:
+            return _request("POST", "/fapi/v1/order", params,
+                            key=self.key, secret=self.secret, retry=False)
+        except RuntimeError:
+            raise                       # 交易所明确拒绝，不重试
+        except Exception:               # 超时/断连：订单可能已受理，回查
+            try:
+                o = self.query_order_by_client(symbol, cid)
+                if o.get("orderId"):
+                    print(f"[exec] 下单超时但已受理 {symbol} {cid}", flush=True)
+                    return o
+            except Exception:  # noqa: BLE001
+                pass
+            raise
 
     def cancel(self, symbol: str, order_id: int) -> dict:
         return _request("DELETE", "/fapi/v1/order",
@@ -259,6 +280,8 @@ class ExecClient:
                   "workingType": working_type}
         if qty is not None:
             params["quantity"] = qty
+            if not position_side:        # 单向持仓：只减仓，不反向开仓
+                params["reduceOnly"] = "true"
         else:
             params["closePosition"] = "true"
         if position_side:
