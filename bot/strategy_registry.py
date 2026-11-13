@@ -122,15 +122,15 @@ def ids() -> list[str]:
 
 
 def infer(cfg: dict) -> str:
-    """老配置没有 strategy 字段时，从开关推断。"""
+    """老配置没有 strategy 字段时，从开关推断；只返回已启用的策略。"""
     sid = str(cfg.get("strategy") or "").strip()
     if sid in REGISTRY:
         return sid
-    if (cfg.get("fade") or {}).get("enabled"):
+    if (cfg.get("fade") or {}).get("enabled") and "fade" in REGISTRY:
         return "fade"
-    if (cfg.get("setup") or {}).get("enabled"):
+    if (cfg.get("setup") or {}).get("enabled") and "two_stage" in REGISTRY:
         return "two_stage"
-    return "pinbar"
+    return next(iter(REGISTRY), "fade")
 
 
 register(StrategySpec(
@@ -140,14 +140,17 @@ register(StrategySpec(
     kind="fade", fields=FADE_FIELDS,
     presets=("fade", "fade_live", "aggr_100", "aggr_500")))
 
-register(StrategySpec(
+# 回放为负期望，暂不启用（定义保留，供以后研究）
+PINBAR_SPEC = StrategySpec(
     id="pinbar", name="单根形态：放量急拉 + 上影反转", tab="单根形态",
     desc=("放量急拉之后，1m 收盘出现「阴线 + 长上影」的 pinbar 就做空；"
           "适合小利快跑，手续费敏感。"),
-    kind="pinbar", fields=PINBAR_FIELDS, presets=("swing",)))
+    kind="pinbar", fields=PINBAR_FIELDS, presets=())
+EXPERIMENTAL = (PINBAR_SPEC,)
 
-register(StrategySpec(
+TWO_STAGE_SPEC = StrategySpec(
     id="two_stage", name="两段式：长周期预备 → 短周期放量", tab="两段式",
     desc=("先在 30m 上找高位/偏离均线的「预备」，再等 1m 放量触发，"
           "过滤掉假突破。"),
-    kind="two_stage", fields=TWO_STAGE_FIELDS, presets=("scalp",)))
+    kind="two_stage", fields=TWO_STAGE_FIELDS, presets=())
+EXPERIMENTAL = EXPERIMENTAL + (TWO_STAGE_SPEC,)
