@@ -77,6 +77,9 @@ class App:
                         command=self.toggle_theme).pack(side="right")
         ttk.Label(head, text=f"v{VERSION}", style="Dim.TLabel").pack(
             side="right", padx=(0, 16), pady=(4, 0))
+        self.btn_panic = ttk.Button(head, text="一键全停", command=self.panic_stop)
+        self.btn_panic.pack(side="right", padx=(0, 8), pady=(4, 0))
+        self.lbl_live = ttk.Label(head, text="● LIVE 实盘运行中", style="Danger.TLabel")
 
         self.nb = ttk.Notebook(self.root)
         self.nb.pack(fill="both", expand=True, padx=12, pady=(4, 12))
@@ -241,18 +244,6 @@ class App:
             "先在「运行模式」里选影子 / 干跑 / 实盘，改完参数点「保存配置」，"
             "再回「仓位监控」页点「启动」。"
         )).pack(anchor="w", pady=(2, 10))
-
-        strat_box = ttk.LabelFrame(parent, text="策略（注册表）", padding=10)
-        strat_box.pack(fill="x", pady=(10, 0))
-        self._strategy_labels = {s.name: s.id for s in REG.all()}
-        self.cb_strategy = ttk.Combobox(strat_box, values=list(self._strategy_labels),
-                                        state="readonly", width=42)
-        self.cb_strategy.grid(row=0, column=0, sticky="w")
-        self.cb_strategy.bind("<<ComboboxSelected>>",
-                              lambda _e: self.switch_strategy())
-        ttk.Label(strat_box, style="Dim.TLabel",
-                  text="换策略会切换下方的参数字段；所有策略共用同一份配置").grid(
-            row=0, column=1, padx=10, sticky="w")
 
         mode_box = ttk.LabelFrame(parent, text="运行模式", padding=10)
         mode_box.pack(fill="x", pady=(0, 10))
@@ -1234,6 +1225,18 @@ class App:
         ttk.Label(preset_box, text="载入后点「保存参数」或直接「启动」才生效",
                   style="Dim.TLabel").grid(row=0, column=2, sticky="w")
 
+        strat_box = ttk.LabelFrame(parent, text="策略（注册表）", padding=10)
+        strat_box.pack(fill="x", pady=(10, 0))
+        self._strategy_labels = {s.name: s.id for s in REG.all()}
+        self.cb_strategy = ttk.Combobox(strat_box, values=list(self._strategy_labels),
+                                        state="readonly", width=42)
+        self.cb_strategy.grid(row=0, column=0, sticky="w")
+        self.cb_strategy.bind("<<ComboboxSelected>>",
+                              lambda _e: self.switch_strategy())
+        ttk.Label(strat_box, style="Dim.TLabel",
+                  text="换策略会切换下方的参数字段；所有策略共用同一份配置").grid(
+            row=0, column=1, padx=10, sticky="w")
+
         mode_box = ttk.LabelFrame(parent, text="运行模式", padding=10)
         mode_box.pack(fill="x")
         self._sg_mode_labels = {"影子：只记录不下单": "shadow",
@@ -1722,6 +1725,40 @@ class App:
         self.jobs.pop(name, None)
         self._refresh_job_status()
 
+    def _refresh_live_badge(self) -> None:
+        if not any(self._alive(n) for n in ("copy", "strategy", "autojoin")):
+            if self.lbl_live.winfo_manager():
+                self.lbl_live.pack_forget()
+            return
+        live = []
+        try:
+            if self._alive("copy") and str(self._load_copy_cfg().get("mode", "shadow")) == "live":
+                live.append("复制")
+            if self._alive("strategy") and str(SC.load().get("mode", "shadow")) == "live":
+                live.append("策略")
+            if self._alive("autojoin") and bool(self._load_aj_cfg().get("live")):
+                live.append("跟单")
+        except Exception:  # noqa: BLE001
+            pass
+        if live:
+            self.lbl_live.configure(text="● LIVE 实盘运行中（" + " / ".join(live) + "）")
+            if not self.lbl_live.winfo_manager():
+                self.lbl_live.pack(side="right", padx=(0, 12), pady=(4, 0))
+        elif self.lbl_live.winfo_manager():
+            self.lbl_live.pack_forget()
+
+    def panic_stop(self) -> None:
+        """只停止后台进程，不平仓；避免极端行情四处点停止。"""
+        stopped = []
+        for name in ("monitor", "copy", "strategy", "autojoin"):
+            if self._alive(name):
+                self.stop_job(name)
+                stopped.append(self.JOB_LABEL[name])
+        self._refresh_live_badge()
+        self._append("⛔ 一键全停：" +
+                     ("已停止 " + "、".join(stopped) if stopped else "没有运行中的任务") +
+                     "（未平仓）", "warn")
+
     def stop_all(self) -> None:
         for name in list(self.jobs):
             self.stop_job(name)
@@ -1734,6 +1771,7 @@ class App:
                 self._append(f"{self.JOB_LABEL[name]}已退出，code={code}",
                              "warn" if code else "info")
         self._refresh_job_status()
+        self._refresh_live_badge()
         self.root.after(800, self._poll)
 
     def _refresh_job_status(self) -> None:
