@@ -2,6 +2,13 @@
 
 ## v1.16.2（2026-11-13）
 
+### 发布包
+
+- 新增 `dist/copy-trading-1.16.2.zip`（0.19 MB，SHA256 6B6BED03…）：
+  源码 + `启动.bat` / `安装依赖.bat` / `.env.example` / 文档，
+  排除 `.env`、`session.json`、`gui/*.json`、`bot/data/*`、日志与截图
+- 解压后 `python -m compileall bot gui` 与核心模块导入均通过
+
 修自动跟单崩溃：`AttributeError: module 'listen_copy' has no attribute 'HEADERS'`。
 
 ### 根因

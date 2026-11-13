@@ -32,3 +32,7 @@ __pycache__/
 
 # ---- embedded legacy repo (contains hard-coded credentials) ----
 Binance-Join-CopyTrader-Automation/
+
+dist/
+release/
+
