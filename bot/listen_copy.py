@@ -48,6 +48,7 @@ FALLBACK_PID = os.environ.get("COPY_PORTFOLIO_ID", "")
 
 # 登录态与 bapi 已抽到 bapi.py
 import bapi  # noqa: E402
+from logutil import log  # noqa: E402
 
 SESSION_PATH = bapi.SESSION_PATH
 

@@ -1,5 +1,17 @@
 # 更新日志
 
+## v1.20.3（2026-11-13）
+
+修复制启动即退出：`listen_copy` 缺少 `log`。
+
+- 抽 `bapi.py` 时把 `log` 定义一起移走了，`calibrate_clock` 第一行就
+  `NameError: name 'log' is not defined`，复制进程 code=1 退出
+- 已改为 `from logutil import log`
+- 实测 `copy_run.py`：执行账户 100U / 双向持仓、3 个跟单组合、
+  3 条私有 WS 全部连接；当前模式 `live_dry`，不会真下单
+
+---
+
 ## v1.20.2（2026-11-13）
 
 修 GUI「测试连接」一直转圈：日志队列解包崩溃。
