@@ -40,22 +40,10 @@ WS_PATH = "/private/stream"
 
 
 # ---------------------------------------------------------------- env / config
-def load_env(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+# 通知与环境已抽到 notify.py，这里只做转发，保持旧调用点不变
+from notify import (TG_CHAT, TG_PROXY, TG_TOKEN, load_env,  # noqa: E402,F401
+                    tg_send, tg_send_async)
 
-
-load_env(ROOT / ".env")
-
-TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")
-TG_PROXY = os.environ.get("TELEGRAM_PROXY", "").strip()
 FALLBACK_PID = os.environ.get("COPY_PORTFOLIO_ID", "")
 
 SESSION_PATH = ROOT / "session.json"
@@ -236,51 +224,6 @@ def new_listen_key(pid: str) -> str:
 def keepalive_listen_key(pid: str) -> None:
     api("/bapi/futures/v1/private/future/user-data/user-listen-key",
         "PUT", {"copyTradeType": "COPY", "portfolioId": pid})
-
-
-def tg_send(text: str) -> bool:
-    if not TG_TOKEN or not TG_CHAT:
-        log("telegram not configured")
-        return False
-    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    payload = urllib.parse.urlencode({
-        "chat_id": TG_CHAT, "text": text, "disable_web_page_preview": "true",
-    }).encode()
-    handlers = []
-    if TG_PROXY:
-        handlers.append(urllib.request.ProxyHandler({"http": TG_PROXY, "https": TG_PROXY}))
-    opener = urllib.request.build_opener(*handlers)
-    for attempt in (1, 2):
-        try:
-            with opener.open(url, data=payload, timeout=10) as r:
-                return r.status == 200
-        except Exception as e:  # noqa: BLE001
-            log(f"telegram error ({attempt}/2): {e}")
-            time.sleep(1)
-    return False
-
-
-_tg_q: "queue.Queue[str]" = queue.Queue(maxsize=200)
-
-
-def _tg_worker() -> None:
-    while True:
-        text = _tg_q.get()
-        try:
-            tg_send(text)
-        except Exception as e:  # noqa: BLE001
-            log(f"telegram worker error: {e}")
-
-
-def tg_send_async(text: str) -> None:
-    """旁路推送：入队即返回，网络慢或失败都不影响成交处理。"""
-    try:
-        _tg_q.put_nowait(text)
-    except queue.Full:
-        log("telegram 队列已满，丢弃一条推送")
-
-
-threading.Thread(target=_tg_worker, daemon=True).start()
 
 
 def fmt_fill(o: dict, nickname: str) -> str:

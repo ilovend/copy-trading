@@ -84,7 +84,10 @@ bot/
   strategy_run.py   自研策略：扫涨幅榜 / 订阅 K 线 / 下单
   strategy_engine.py 策略风控、下单、持仓管理
   strategy_volume_pinbar.py 放量急拉 + 上影反转信号（纯函数）
-  strategy_config.py 策略参数默认值与读写
+  strategy_config.py 策略参数默认值与读写（含类型/范围校验）
+  net.py            公开 HTTP（复用连接 + 线程锁）
+  notify.py         .env 与 Telegram 推送
+  symbol_filter.py  合约过滤：白名单 / 黑名单 / 自动拉黑
   version.py        版本号
 gui/
   app.py            桌面控制台（五页）

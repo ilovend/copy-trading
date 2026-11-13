@@ -31,7 +31,7 @@ import websockets  # noqa: E402
 
 import strategy_volume_pinbar as SP  # noqa: E402
 import strategy_fade as SF  # noqa: E402
-from strategy_config import load as load_cfg  # noqa: E402
+from strategy_config import CONFIG_PATH, load as load_cfg  # noqa: E402
 from strategy_engine import (INTERVAL_S, StrategyEngine, ladder_of, log,  # noqa: E402
                              set_log_file, simulate_exit)
 
@@ -61,7 +61,7 @@ def acquire_single_instance() -> None:
 
 def scan_universe(cfg: dict) -> list[str]:
     """候选池：默认按 24h 涨幅排序取前 N；剥头皮预设可按成交额排序。"""
-    from copy_engine import http_json
+    from net import http_json
     u = cfg.get("universe") or {}
     top_n = int(u.get("top_n", 15) or 15)
     min_chg = float(u.get("min_change_pct", 3.0) or 0)
@@ -90,7 +90,7 @@ def scan_universe(cfg: dict) -> list[str]:
 
 
 def fetch_bars(symbol: str, interval: str, limit: int = BARS_KEEP) -> list[dict]:
-    from copy_engine import http_json
+    from net import http_json
     rows = http_json(f"{FAPI}/fapi/v1/klines?symbol={symbol}&interval={interval}"
                      f"&limit={limit}", timeout=15)
     out = []
@@ -203,7 +203,7 @@ class Runner:
                         self._cutoff_logged = True
                         log("已收盘：今晚不再开仓，明天 00:00 后自动恢复")
                         try:
-                            from listen_copy import tg_send
+                            from notify import tg_send
                             tg_send("🌙 策略收盘：持仓已平，今晚不再开仓，明天自动恢复")
                         except Exception:  # noqa: BLE001
                             pass
@@ -214,7 +214,7 @@ class Runner:
                 if hb > 0 and now - self._last_beat >= hb * 60:
                     self._last_beat = now
                     try:
-                        from listen_copy import tg_send
+                        from notify import tg_send
                         tg_send(f"💓 策略存活 {datetime.now():%H:%M}\n"
                                 f"候选 {len(self.universe)} · 持仓 {len(self.engine.positions)} · "
                                 f"今日 {self.engine.realized_today:+.2f}U\n"
@@ -274,7 +274,7 @@ class Runner:
     # ------------------------------------------------------------- REST 兜底
     async def _rest_loop(self) -> None:
         """WS 收不到数据时（代理/网络问题），用 REST 轮询补 K 线与价格。"""
-        from copy_engine import http_json
+        from net import http_json
         step = INTERVAL_S.get(self.interval, 60) * 1000
         while not self._stop.is_set():
             try:
@@ -428,7 +428,7 @@ class Runner:
         await asyncio.to_thread(self.engine.sweep_orphan_algo)
 
         try:
-            from listen_copy import tg_send
+            from notify import tg_send
             trade = self.engine.trade
             pool = len(self.universe)
             if self.fade_cfg.get("enabled"):
@@ -600,6 +600,9 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_cfg()
+    src = "文件" if Path(CONFIG_PATH).exists() else "默认值"
+    print(f"配置来源：{src} · 预设 {args.preset or '（沿用文件）'} · "
+          f"模式 {cfg.get('mode')} · 周期 {cfg.get('interval')}", flush=True)
     if args.preset:
         from strategy_config import PRESETS, apply_preset
         if args.preset not in PRESETS:
@@ -636,7 +639,7 @@ def main() -> None:
     finally:
         try:
             from version import __version__
-            from listen_copy import tg_send
+            from notify import tg_send
             tg_send(f"🔴 自研策略已停止 v{__version__}\n{runner.engine.summary()}")
         except Exception:  # noqa: BLE001
             pass

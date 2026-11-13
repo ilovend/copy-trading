@@ -18,7 +18,6 @@ import time
 from datetime import datetime, time as dtime
 from pathlib import Path
 
-import ban_list as _ban_compat  # noqa: F401  兼容旧引用
 import symbol_filter as FILTER
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,7 +160,7 @@ class StrategyEngine:
         return self._hedge
 
     def load_filters(self) -> None:
-        from copy_engine import http_json
+        from net import http_json
         data = http_json("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=20)
         for s in data.get("symbols", []):
             info = {"step": 0.001, "tick": 0.0001, "min_notional": 5.0}
@@ -181,7 +180,7 @@ class StrategyEngine:
                                             "min_notional": 5.0}
 
     def _book(self, symbol: str) -> tuple[float, float]:
-        from copy_engine import http_json
+        from net import http_json
         try:
             d = http_json(f"https://fapi.binance.com/fapi/v1/depth?symbol={symbol}&limit=5")
             return float(d["bids"][0][0]), float(d["asks"][0][0])
@@ -272,7 +271,7 @@ class StrategyEngine:
         if not self._notify_on:
             return
         try:
-            from listen_copy import tg_send_async
+            from notify import tg_send_async
             tg_send_async(text)
         except Exception:  # noqa: BLE001
             pass

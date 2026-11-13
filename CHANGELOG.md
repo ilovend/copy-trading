@@ -1,5 +1,35 @@
 # 更新日志
 
+## v1.13.0（2026-11-13）
+
+架构解耦 P0 + P1：策略不再依赖复制模块，配置加载加校验。
+
+### P0（清理）
+
+- 去掉 `strategy_engine` 对 `ban_list` 兼容壳的 import
+- 启动时打印配置来源：`配置来源：文件 · 预设 fade_live · 模式 live · 周期 1m`
+- 确认 `strategy-bans.json` 已无引用（名单统一走 `symbol-filter.json`）
+
+### P1（抽公共层 + 配置校验）
+
+- 新增 `bot/net.py`：`http_json` + 全局连接锁，从 `copy_engine` 迁出；
+  `copy_engine` 改为转发，策略/工具直接 `from net import http_json`
+- 新增 `bot/notify.py`：`.env` 读取 + `tg_send` / `tg_send_async`，从 `listen_copy` 迁出；
+  `listen_copy` 改为转发，策略直接 `from notify import tg_send`
+- 解耦结果：`strategy_engine` 与 `strategy_run` **不再 import** `listen_copy` /
+  `copy_engine` / `ban_list`
+- `strategy_config.load()` 增加校验：类型纠正（int/float/bool/str）、
+  枚举（mode/interval/sort_by/entry_mode/tp_mode/cutoff）、范围（名义、仓位、止损、阈值等），
+  非法值回默认并打印 `[config]` 告警
+
+### 测试
+
+编译通过；形态 7/7、两段式 4/4、maker 4/4、引擎 ALL PASS；
+过滤/止损守卫/拉黑加仓/残留清理/对账/GUI 冒烟全部通过；
+配置校验对 5 类非法值均正确回退并告警。
+
+---
+
 ## v1.12.2（2026-11-13）
 
 明确「拉黑时已持仓 / 未持仓」的行为，并补上加仓拦截。

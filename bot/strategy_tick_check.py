@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bot"))
 
-from copy_engine import http_json  # noqa: E402
+from net import http_json  # noqa: E402
 import strategy_config as SC  # noqa: E402
 import strategy_engine as SE  # noqa: E402
 import strategy_run as RS  # noqa: E402

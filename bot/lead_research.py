@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bot"))
 
 import listen_copy as L  # noqa: E402
-from copy_engine import http_json  # noqa: E402
+from net import http_json  # noqa: E402
 
 DATA = ROOT / "bot" / "data"
 PATH = "/bapi/futures/v1/friendly/future/copy-trade/lead-portfolio/trade-history"

@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "bot"))
 
 import strategy_config as SC  # noqa: E402
 import strategy_run as RS  # noqa: E402
-from copy_engine import http_json  # noqa: E402
+from net import http_json  # noqa: E402
 from exec_client import ExecClient, load_keys  # noqa: E402
 
 FAPI = "https://fapi.binance.com"
