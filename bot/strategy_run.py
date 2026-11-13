@@ -164,7 +164,7 @@ class Runner:
                 if self.fade_cfg.get("enabled"):
                     # 已有仓位时不重复开首仓（加仓由引擎按逆行触发）
                     if symbol not in self.engine.positions:
-                        sig = SF.fade_signal(bars, self.fade_cfg)
+                        sig = SF.fade_signal(bars, {**self.fade_cfg, "direction": self.cfg.get("direction", "short")})
                 elif self.setup_cfg.get("enabled"):
                     stage = self.stages.get(symbol)
                     if stage is None:
@@ -179,7 +179,7 @@ class Runner:
                     continue
                 if sig.get("chg_1h") is not None:
                     log(f"信号   {symbol:12s} 1h {sig['chg_1h']:+.1f}% "
-                        f"15m {sig['chg_15m']:+.1f}% → 做空")
+                        f"15m {sig['chg_15m']:+.1f}% → {sig.get('side', 'SHORT')}")
                 else:
                     setup = sig.get("setup") or {}
                     log(f"信号   {symbol:12s} 放量 {sig.get('vol_ratio')}x "

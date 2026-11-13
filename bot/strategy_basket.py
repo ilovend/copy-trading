@@ -12,7 +12,7 @@ class BasketMixin:
     def _manage_basket(self, symbol: str, pos: dict, mark: float, now: float) -> None:
         """暴涨做空 + 逆行加仓 + 回均价止盈，带硬止损与时间止损。"""
         b = self.basket
-        pnl = (pos["avg"] - mark) / pos["avg"] * 100
+        pnl = self._pnl_pct(pos.get("side", "SHORT"), pos["avg"], mark)
         pos["peak"] = max(pos["peak"], pnl)
         tp = float(b.get("basket_tp_pct", 0.5) or 0.5)
         hard = float(b.get("hard_stop_pct", 6.0) or 6.0)
@@ -42,6 +42,7 @@ class BasketMixin:
                 self._basket_add(symbol, pos, mark, pnl)
 
     def _basket_add(self, symbol: str, pos: dict, mark: float, pnl: float) -> None:
+        side = str(pos.get("side") or "SHORT").upper()
         b = self.basket
         notional = float(b.get("notional", self.trade.get("notional", 5)) or 5)
         flt = self._flt(symbol)
@@ -52,13 +53,13 @@ class BasketMixin:
         if qty <= 0:
             return
         bid, ask = self._book(symbol)
-        px = self._ioc_price(symbol, "SELL", bid, ask, mark)
+        px = self._ioc_price(symbol, self._entry_side(side), bid, ask, mark)
         log(f"ADD?   {symbol:12s} 逆行加仓 #{len(pos['entries'])} qty={qty:g} px={px:g}")
         entry = px
         if self.mode == "live":
             try:
                 self._ensure_leverage(symbol)
-                resp = self._send(symbol, "SELL", qty, px, "SHORT")
+                resp = self._send(symbol, self._entry_side(side), qty, px, self._pside(side))
             except Exception as e:  # noqa: BLE001
                 log(f"⚠ 加仓失败 {symbol}: {e}")
                 return
@@ -79,7 +80,8 @@ class BasketMixin:
                      entries=len(pos["entries"]), mode=self.mode, reason="basket")
         log(f"ADD    {symbol:12s} 共 {pos['qty']:g} 均价 {pos['avg']:g} "
             f"（{len(pos['entries'])} 笔）")
-        self._notify(f"➕ 均价加空 {symbol}\n{qty:g} @ {entry:g}\n"
+        dir_txt = "多" if side == "LONG" else "空"
+        self._notify(f"➕ 均价加{dir_txt} {symbol}\n{qty:g} @ {entry:g}\n"
                      f"共 {pos['qty']:g} 均价 {pos['avg']:g}")
         self._cancel_protect(symbol, pos)
         self._place_protect(symbol, pos)

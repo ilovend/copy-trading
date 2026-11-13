@@ -37,12 +37,13 @@ class ProtectMixin:
 
     def _place_one_protect(self, ex, symbol: str, kind: str, price: float,
                            ps: str | None, qty: float | None = None,
-                           working_type: str = "MARK_PRICE") -> int | None:
+                           working_type: str = "MARK_PRICE",
+                           close_side: str = "BUY") -> int | None:
         """挂单个条件单，处理「旧单还没撤干净」(-4130) 与连接抖动。"""
         last_msg = ""
         for attempt in range(1, 5):
             try:
-                r = ex.stop_close(symbol, "BUY", price, kind=kind,
+                r = ex.stop_close(symbol, close_side, price, kind=kind,
                                   position_side=ps, qty=qty,
                                   working_type=working_type)
                 return r.get("algoId") or r.get("orderId")
@@ -80,10 +81,12 @@ class ProtectMixin:
         if tp <= 0 or hard <= 0:
             return
         avg = float(pos["avg"])
+        side = str(pos.get("side") or "SHORT").upper()
+        close_side = self._close_side(side)
         tick = self._flt(symbol)["tick"]
-        sl_px = self._tick_round(avg * (1 + hard / 100), tick)
-        tp_px = self._tick_round(avg * (1 - tp / 100), tick)
-        ps = "SHORT" if self._is_hedge() else None
+        sl_px = self._tick_round(self._sl_price(side, avg, hard), tick)
+        tp_px = self._tick_round(self._tp_price(side, avg, tp), tick)
+        ps = self._pside(side)
         ex = self._ex_client()
         # 加仓后均价变了：先把旧条件单撤干净，否则新单会被 -4130 拒
         try:
@@ -97,11 +100,13 @@ class ProtectMixin:
         sl_work = str(b.get("sl_working_type", "MARK_PRICE") or "MARK_PRICE")
         tp_work = str(b.get("tp_working_type", "CONTRACT_PRICE") or "CONTRACT_PRICE")
         sl_id = self._place_one_protect(ex, symbol, "STOP_MARKET", sl_px, ps,
-                                       working_type=sl_work)
+                                       working_type=sl_work,
+                                       close_side=close_side)
         if sl_id:
             ids.append(sl_id)
         tp_id = self._place_one_protect(ex, symbol, "TAKE_PROFIT_MARKET", tp_px, ps,
-                                       qty=pos["qty"], working_type=tp_work)
+                                       qty=pos["qty"], working_type=tp_work,
+                                       close_side=close_side)
         if tp_id:
             ids.append(tp_id)
         pos["protect"] = ids

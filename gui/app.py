@@ -1088,7 +1088,8 @@ class App:
                   ("HTF 均线周期", "signal.htf_ema"),
                   ("HTF 高位阈值", "signal.htf_high_zone"),
                   ("HTF 偏离 ATR", "signal.htf_ext_atr"))),
-        ("交易与风控", (("单笔名义 (U)", "trade.notional"),
+        ("交易与风控", (
+                  ("方向 short/long/both", "direction"),("单笔名义 (U)", "trade.notional"),
                   ("最多同时持仓", "trade.max_positions"),
                   ("止损 %", "trade.sl_pct"),
                   ("最长持仓 (秒)", "trade.max_hold_s"),
@@ -1232,6 +1233,7 @@ class App:
                 ttk.Label(cell, text=label, width=18, style="Muted.TLabel").pack(side="left")
                 var = tk.StringVar()
                 choices = {"universe.sort_by": ["change", "volume"],
+                           "direction": ["short", "long", "both"],
                            "trade.entry_mode": ["taker", "maker"],
                            "trade.tp_mode": ["taker", "maker"]}.get(key)
                 if choices:

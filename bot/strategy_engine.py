@@ -282,15 +282,47 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             return self._halt
         return ""
 
+
+    # ------------------------------------------------------------- 方向辅助
+    @staticmethod
+    def _entry_side(side: str) -> str:
+        return "SELL" if side == "SHORT" else "BUY"
+
+    @staticmethod
+    def _close_side(side: str) -> str:
+        return "BUY" if side == "SHORT" else "SELL"
+
+    def _pside(self, side: str) -> str | None:
+        return side if self._is_hedge() else None
+
+    @staticmethod
+    def _pnl_pct(side: str, avg: float, price: float) -> float:
+        return ((avg - price) if side == "SHORT" else (price - avg)) / avg * 100
+
+    @staticmethod
+    def _pnl_u(side: str, avg: float, price: float, qty: float) -> float:
+        return ((avg - price) if side == "SHORT" else (price - avg)) * qty
+
+    @staticmethod
+    def _tp_price(side: str, avg: float, pct: float) -> float:
+        return avg * (1 - pct / 100) if side == "SHORT" else avg * (1 + pct / 100)
+
+    @staticmethod
+    def _sl_price(side: str, avg: float, pct: float) -> float:
+        return avg * (1 + pct / 100) if side == "SHORT" else avg * (1 - pct / 100)
+
     def open_short(self, symbol: str, detail: dict, signal_price: float) -> bool:
         self._reset_daily()
         self.stats["signals"] += 1
+        side = str(detail.get("side") or "SHORT").upper()
+        if side not in ("SHORT", "LONG"):
+            side = "SHORT"
         ok, why = FILTER.is_allowed(symbol)
         if not ok:
             self._reject(symbol, "filtered", why)
             return False
         rw = self.cfg.get("runaway") or {}
-        if rw.get("enabled", True):
+        if rw.get("enabled", True) and side == "SHORT":
             c1h = float(detail.get("chg_1h") or 0)
             c15 = float(detail.get("chg_15m") or 0)
             lim1 = float(rw.get("entry_1h_pct", 20) or 20)
@@ -333,14 +365,16 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             return False
         guard = self._symbol_stop.get(symbol)
         if guard and bool(self.trade.get("post_stop_guard", True)):
-            if signal_price >= float(guard.get("price") or 0):
+            gpx = float(guard.get("price") or 0)
+            blocked = (signal_price >= gpx) if side == "SHORT" else (signal_price <= gpx)
+            if blocked:
                 self._reject(symbol, "post_stop",
-                             f"上次止损 {guard.get('price'):g}，价格还没跌回去，不追空")
+                             f"上次止损 {gpx:g}，价格还没回到止损价另一侧，不追")
                 return False
             self._symbol_stop.pop(symbol, None)
         if self.mode == "live":
             try:
-                amt = self._ex_client().position(symbol, "SHORT" if self._is_hedge() else None)
+                amt = self._ex_client().position(symbol, self._pside(side))
             except Exception as e:  # noqa: BLE001
                 self._reject(symbol, "position_api", f"查持仓失败: {e}")
                 return False
@@ -351,6 +385,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         return self._enter(symbol, detail, signal_price, add=False)
 
     def _add(self, symbol: str, pos: dict, detail: dict, signal_price: float) -> bool:
+        side = str(pos.get("side") or "SHORT").upper()
         window = float(self.trade.get("add_window_s", 0) or 0)
         max_adds = int(self.trade.get("max_adds", 0) or 0)
         if max_adds <= 0 or window <= 0:
@@ -369,15 +404,19 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             return False
         min_gain = float(self.trade.get("add_min_gain_pct", 0) or 0)
         last_px = pos["entries"][-1]["price"]
-        if signal_price < last_px * (1 + min_gain / 100.0):
+        too_low = signal_price < last_px * (1 + min_gain / 100.0)
+        too_high = signal_price > last_px * (1 - min_gain / 100.0)
+        if (side == "SHORT" and too_low) or (side == "LONG" and too_high):
             self._reject(symbol, "add_price",
-                         f"信号价 {signal_price:g} 低于上一笔 {last_px:g}，不追空")
+                         f"信号价 {signal_price:g} 不在允许加仓方向（上一笔 {last_px:g}）")
             return False
         log(f"ADD?   {symbol:12s} 第 {len(pos['entries'])} 次加仓 "
             f"距今 {age:.0f}s 均价 {pos['avg']:g}")
-        return self._enter(symbol, detail, signal_price, add=True)
+        return self._enter(symbol, {**detail, "side": side}, signal_price, add=True)
 
     def _enter(self, symbol: str, detail: dict, signal_price: float, add: bool) -> bool:
+        side = str(detail.get("side") or "SHORT").upper()
+        dir_txt = "多" if side == "LONG" else "空"
         bid, ask = self._book(symbol)
         max_slip = float(self.trade.get("max_slippage_pct", 0.3) or 0.3)
         if bid > 0:
@@ -402,14 +441,15 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                          f"最小名义 {flt['min_notional']:g}U 超过单笔 {notional:g}U 的 1.5 倍")
             return False
 
-        px = self._ioc_price(symbol, "SELL", bid, ask, signal_price)
+        px = self._ioc_price(symbol, self._entry_side(side), bid, ask, signal_price)
         maker_entry = (self.mode == "live" and ask > 0
                        and str(self.trade.get("entry_mode", "taker")) == "maker")
         if maker_entry:
-            # 被动挂单要挂在卖一价（挂在买一价就等于吃单，算 taker）
-            px = max(self._tick_round(ask, flt["tick"]), flt["tick"])
+            # 做空挂在卖一价、做多挂在买一价（挂在会立即成交的一侧就等于吃单）
+            base_px = ask if side == "SHORT" else bid
+            px = max(self._tick_round(base_px, flt["tick"]), flt["tick"])
         self._cooldown[symbol] = time.time()
-        log(f"{'ADD ' if add else 'OPEN'}?  {symbol:12s} SHORT qty={qty:g} px={px:g} "
+        log(f"{'ADD ' if add else 'OPEN'}?  {symbol:12s} {side:5s} qty={qty:g} px={px:g} "
             f"名义={qty * signal_price:.2f}U 模式={self.mode}"
             f"{' 被动挂单' if maker_entry else ''}")
 
@@ -418,7 +458,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             try:
                 self._ensure_leverage(symbol)
                 if maker_entry:
-                    resp = self._send(symbol, "SELL", qty, px, "SHORT", tif="GTC")
+                    resp = self._send(symbol, self._entry_side(side), qty, px, self._pside(side), tif="GTC")
                     oid = resp.get("orderId")
                     timeout = float(self.trade.get("entry_timeout_s", 5) or 5)
                     filled, fill_px = self._await_fill(symbol, oid, timeout, px, qty)
@@ -429,7 +469,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                     entry = fill_px or px
                     qty = filled
                 else:
-                    resp = self._send(symbol, "SELL", qty, px, "SHORT")
+                    resp = self._send(symbol, self._entry_side(side), qty, px, self._pside(side))
                     filled = float(resp.get("executedQty") or 0)
                     if filled <= 0:
                         self._reject(symbol, "unfilled", f"status={resp.get('status')}")
@@ -447,7 +487,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                    "avg": entry, "opened_at": time.time(), "peak": 0.0,
                    "trail_on": False, "trail_level": 0.0, "tp_done": [False, False],
                    "realized": 0.0, "parts": 0, "detail": detail,
-                   "last_add_pnl": 0.0}
+                   "side": side, "last_add_pnl": 0.0}
             self.positions[symbol] = pos
         pos["entries"].append({"qty": qty, "price": entry, "ts": time.time()})
         pos["qty"] = sum(e["qty"] for e in pos["entries"])
@@ -461,24 +501,24 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                          avg=round(pos["avg"], 8), total_qty=pos["qty"],
                          notional=round(pos["qty"] * pos["avg"], 4),
                          entries=len(pos["entries"]), mode=self.mode, signal=detail)
-            log(f"ADD    {symbol:12s} SHORT {qty:g} @ {entry:g} "
+            log(f"ADD    {symbol:12s} {side:5s} {qty:g} @ {entry:g} "
                 f"→ 共 {pos['qty']:g} 均价 {pos['avg']:g}")
-            self._notify(f"➕ 策略加空 {symbol}\n{qty:g} @ {entry:g}\n"
+            self._notify(f"➕ 策略加{dir_txt} {symbol}\n{qty:g} @ {entry:g}\n"
                          f"共 {pos['qty']:g} 均价 {pos['avg']:g}")
         else:
             self.stats["opens"] += 1
             self._record("open", symbol=symbol, qty=qty, entry=entry,
                          notional=round(qty * entry, 4), mode=self.mode, signal=detail)
-            log(f"OPEN   {symbol:12s} SHORT {qty:g} @ {entry:g} ({qty * entry:.2f}U) "
+            log(f"OPEN   {symbol:12s} {side:5s} {qty:g} @ {entry:g} ({qty * entry:.2f}U) "
                 f"SL{self.trade.get('sl_pct')}% 阶梯 {ladder_of(self.trade)} "
                 f"追踪 {self.trade.get('trail_activate_pct')}/"
                 f"{self.trade.get('trail_gap_pct')}")
             tr_txt = f"TR {detail['tr_ratio']}x  " if detail.get("tr_ratio") else ""
             if detail.get("chg_1h") is not None:
-                head = (f"🔻 策略开空 {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
+                head = (f"🔻 策略开{dir_txt} {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
                         f"1h {detail['chg_1h']:+.1f}%  15m {detail['chg_15m']:+.1f}%")
             else:
-                head = (f"🔻 策略开空 {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
+                head = (f"🔻 策略开{dir_txt} {symbol}\n{qty:g} @ {entry:g}  {qty * entry:.1f}U\n"
                         f"放量 {detail.get('vol_ratio')}x  {tr_txt}"
                         f"上影 {(detail.get('upper_ratio') or 0) * 100:.0f}%")
             self._notify(head)
@@ -567,13 +607,14 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         tp = float(self.trade.get("tp1_pct", 0) or 0)
         if tp <= 0 or pos.get("tp_order") or pos.get("qty", 0) <= 0:
             return
-        px = self._tick_round(pos["avg"] * (1 - tp / 100), self._flt(symbol)["tick"])
+        side = str(pos.get("side") or "SHORT").upper()
+        px = self._tick_round(self._tp_price(side, pos["avg"], tp), self._flt(symbol)["tick"])
         try:
-            r = self._send(symbol, "BUY", pos["qty"], px, "SHORT",
-                           reduce_only=True, tif="GTC")
+            r = self._send(symbol, self._close_side(side), pos["qty"], px,
+                           self._pside(side), reduce_only=True, tif="GTC")
             pos["tp_order"] = r.get("orderId")
             pos["tp_price"] = px
-            log(f"TP挂单 {symbol:12s} BUY {pos['qty']:g} @ {px:g}（maker 等待成交）")
+            log(f"TP挂单 {symbol:12s} {self._close_side(side)} {pos['qty']:g} @ {px:g}（maker 等待成交）")
         except Exception as e:  # noqa: BLE001
             log(f"⚠ 止盈挂单失败 {symbol}: {e}（该仓改走 taker 止盈）")
             pos["tp_order"] = None
@@ -592,7 +633,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         """限价止盈单成交：落账并收尾。"""
         qty = pos["qty"]
         exit_price = float(pos.get("tp_price") or 0) or pos["avg"]
-        pnl = (pos["avg"] - exit_price) * qty
+        pnl = self._pnl_u(pos.get("side", "SHORT"), pos["avg"], exit_price, qty)
         pos["qty"] = 0.0
         pos["realized"] += pnl
         pos["parts"] += 1
@@ -602,7 +643,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         self._record("close_partial", symbol=symbol, reason="take_profit_maker",
                      qty=qty, entry=round(pos["avg"], 8), exit=exit_price,
                      pnl=round(pnl, 4),
-                     pnl_pct=round((pos["avg"] - exit_price) / pos["avg"] * 100, 3),
+                     pnl_pct=round(self._pnl_pct(pos.get("side", "SHORT"), pos["avg"], exit_price), 3),
                      remaining=0.0, mode=pos["mode"])
         log(f"PART   {symbol:12s} tp(maker) {qty:g} @ {exit_price:g} "
             f"pnl={pnl:+.3f}U 今日 {self.realized_today:+.2f}U")
@@ -640,7 +681,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             if self.basket_on:
                 self._manage_basket(symbol, pos, mark, now)
                 continue
-            pnl = (pos["avg"] - mark) / pos["avg"] * 100
+            pnl = self._pnl_pct(pos.get("side", "SHORT"), pos["avg"], mark)
             pos["peak"] = max(pos["peak"], pnl)
 
             if pnl <= -sl:
@@ -681,7 +722,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             return
         try:
             STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            data = {s: {"qty": p["qty"], "avg": p["avg"],
+            data = {s: {"qty": p["qty"], "avg": p["avg"], "side": p.get("side", "SHORT"),
                         "opened_at": p["opened_at"], "entries": p["entries"]}
                     for s, p in self.positions.items()}
             tmp = STATE_PATH.with_suffix(".tmp")
@@ -711,8 +752,9 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                 continue
             entry = float(r.get("entryPrice") or 0) or float(p.get("avg") or 0)
             qty = amt
+            side = "SHORT" if float(r.get("positionAmt") or 0) < 0 else "LONG"
             self.positions[sym] = {
-                "symbol": sym, "mode": self.mode,
+                "symbol": sym, "mode": self.mode, "side": side,
                 "entries": [{"qty": qty, "price": entry, "ts": time.time()}],
                 "qty": qty, "avg": entry,
                 "opened_at": float(p.get("opened_at") or time.time()),
@@ -755,7 +797,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             reason, note = "exchange_sl", "交易所止损条件单成交"
             hard = float(self.basket.get("hard_stop_pct", 0) or 0)
             self._symbol_stop[symbol] = {
-                "price": float(pos["avg"]) * (1 + hard / 100),
+                "price": self._sl_price(str(pos.get("side") or "SHORT"),
+                                        float(pos["avg"]), hard),
                 "ts": time.time(),
             }
         self._record("close", symbol=symbol, reason=reason, qty=0.0,
@@ -865,19 +908,21 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         if remaining - qty < flt["step"] * 0.5:
             qty = remaining                      # 不留碎单
 
+        side = str(pos.get("side") or "SHORT").upper()
         log(f"CLOSE? {symbol:12s} {reason:8s} qty={qty:g}/{remaining:g} mark={mark:g} "
-            f"pnl≈{(pos['avg'] - mark) / pos['avg'] * 100:+.2f}%")
+            f"pnl≈{self._pnl_pct(side, pos['avg'], mark):+.2f}%")
         exit_price = mark
         if pos["mode"] == "live":
             bid, ask = self._book(symbol)
-            px = self._ioc_price(symbol, "BUY", bid, ask, mark)
+            px = self._ioc_price(symbol, self._close_side(side), bid, ask, mark)
             try:
-                resp = self._send(symbol, "BUY", qty, px, "SHORT", reduce_only=True)
+                resp = self._send(symbol, self._close_side(side), qty, px, self._pside(side), reduce_only=True)
                 filled = float(resp.get("executedQty") or 0)
                 if filled <= 0:
                     log(f"⚠ 平仓 IOC 未成交 {symbol}，转市价")
-                    resp = self._send(symbol, "BUY", qty, 0, "SHORT",
-                                      reduce_only=True, market=True)
+                    resp = self._send(symbol, self._close_side(side), qty, 0,
+                                      self._pside(side), reduce_only=True,
+                                      market=True)
                     filled = float(resp.get("executedQty") or 0)
                 if filled <= 0:
                     self._reject(symbol, "close_failed",
@@ -900,7 +945,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         if reason in ("stop_loss", "basket_stop"):
             self._symbol_stop[symbol] = {"price": exit_price, "ts": time.time()}
 
-        pnl = (pos["avg"] - exit_price) * qty
+        pnl = self._pnl_u(pos.get("side", "SHORT"), pos["avg"], exit_price, qty)
         pos["qty"] = max(0.0, remaining - qty)
         pos["realized"] += pnl
         pos["parts"] += 1
@@ -910,7 +955,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         self._record("close_partial", symbol=symbol, reason=reason, qty=qty,
                      entry=round(pos["avg"], 8), exit=exit_price,
                      pnl=round(pnl, 4),
-                     pnl_pct=round((pos["avg"] - exit_price) / pos["avg"] * 100, 3),
+                     pnl_pct=round(self._pnl_pct(pos.get("side", "SHORT"), pos["avg"], exit_price), 3),
                      remaining=round(pos["qty"], 8), mode=pos["mode"])
         log(f"PART   {symbol:12s} {reason:8s} {qty:g} @ {exit_price:g} "
             f"pnl={pnl:+.3f}U 剩余 {pos['qty']:g} 今日 {self.realized_today:+.2f}U")
