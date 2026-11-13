@@ -144,7 +144,7 @@ register(StrategySpec(
     desc=("1h 急涨 + 15m 仍在冲 → 做空；逆行加仓、回均价止盈，"
           "交易所条件单兜底，止损后不追、垂直拉升当天拉黑。"),
     kind="fade", fields=FADE_FIELDS,
-    presets=("fade", "fade_live", "aggr_100", "aggr_500")))
+    presets=("fade", "fade_wide", "fade_live", "aggr_100", "aggr_500")))
 
 # 回放为负期望，暂不启用（定义保留，供以后研究）
 PINBAR_SPEC = StrategySpec(

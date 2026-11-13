@@ -1268,6 +1268,7 @@ class App:
         self.active_strategy = sid
         self.sg_cfg["strategy"] = sid
         spec = REG.get(sid)
+        self._refresh_preset_choices(sid)
         self.var_sg_title.set(spec.name)
         self.var_sg_desc.set(spec.desc)
         try:
@@ -1286,6 +1287,7 @@ class App:
         """把配置回填到控件（启动时和载入预设时共用）。"""
         sid = REG.infer(cfg)
         self.active_strategy = sid
+        self._refresh_preset_choices(sid)
         spec = REG.get(sid) or REG.all()[0]
         self.var_sg_title.set(spec.name)
         self.var_sg_desc.set(spec.desc)
@@ -1312,9 +1314,25 @@ class App:
         self.var_sg_basket.set(bool((cfg.get("basket") or {}).get("enabled", False)))
         self._apply_basket_state()
 
+    def _refresh_preset_choices(self, sid: str) -> None:
+        spec = REG.get(sid)
+        allowed = set(spec.presets if spec else ())
+        labels = [lbl for lbl, pid in self._all_preset_labels.items() if pid in allowed]
+        self.cb_sg_preset.configure(values=labels)
+        if not labels:
+            self.cb_sg_preset.set("")
+        elif self.cb_sg_preset.get() not in labels:
+            self.cb_sg_preset.set(labels[0])
+
     def load_strategy_preset(self) -> None:
         name = self._preset_labels.get(self.cb_sg_preset.get(), "scalp")
-        self.sg_cfg = SC.apply_preset(SC.load(), name)
+        sid = str(self.sg_cfg.get("strategy") or "fade")
+        spec = REG.get(sid)
+        if not spec or name not in (spec.presets or ()):
+            messagebox.showwarning("预设不匹配",
+                                   "这个预设不属于当前策略，已取消载入。")
+            return
+        self.sg_cfg = SC.apply_preset(self.sg_cfg, name)
         self._sg_fill(self.sg_cfg)
         spec = REG.get(str(self.sg_cfg.get("strategy") or "fade"))
         if spec:
@@ -1336,22 +1354,6 @@ class App:
         ttk.Label(parent, textvariable=self.var_sg_desc, style="Hint.TLabel",
                   justify="left", wraplength=820).pack(anchor="w", pady=(2, 10))
 
-        preset_box = ttk.LabelFrame(parent, text="参数预设", padding=10)
-        preset_box.pack(fill="x")
-        self._preset_labels = {"复刻带单员：暴涨做空 + 有限加仓": "fade",
-                               "宽止盈·15m 信号（TP4/SL6）": "fade_wide",
-                               "实盘：5U×6、单币、15m 信号、追踪止盈": "fade_live",
-                               "激进·100U（10U×6、日亏≤15U）": "aggr_100",
-                               "激进·500U（20U×6、日亏≤30U）": "aggr_500"}
-        self.cb_sg_preset = ttk.Combobox(preset_box, values=list(self._preset_labels),
-                                         state="readonly", width=34)
-        self.cb_sg_preset.current(0)
-        self.cb_sg_preset.grid(row=0, column=0, sticky="w")
-        ttk.Button(preset_box, text="载入预设",
-                   command=self.load_strategy_preset).grid(row=0, column=1, padx=10)
-        ttk.Label(preset_box, text="载入后点「保存参数」或直接「启动」才生效",
-                  style="Dim.TLabel").grid(row=0, column=2, sticky="w")
-
         strat_box = ttk.LabelFrame(parent, text="策略（注册表）", padding=10)
         strat_box.pack(fill="x", pady=(10, 0))
         self._strategy_labels = {s.name: s.id for s in REG.all()}
@@ -1363,6 +1365,23 @@ class App:
         ttk.Label(strat_box, style="Dim.TLabel",
                   text="换策略会切换下方的参数字段；所有策略共用同一份配置").grid(
             row=0, column=1, padx=10, sticky="w")
+
+        preset_box = ttk.LabelFrame(parent, text="参数预设", padding=10)
+        preset_box.pack(fill="x")
+        self._preset_labels = {"复刻带单员：暴涨做空 + 有限加仓": "fade",
+                               "宽止盈·15m 信号（TP4/SL6）": "fade_wide",
+                               "实盘：5U×6、单币、15m 信号、追踪止盈": "fade_live",
+                               "激进·100U（10U×6、日亏≤15U）": "aggr_100",
+                               "激进·500U（20U×6、日亏≤30U）": "aggr_500"}
+        self.cb_sg_preset = ttk.Combobox(preset_box, values=list(self._preset_labels),
+                                         state="readonly", width=34)
+        self._all_preset_labels = dict(self._preset_labels)
+        self.cb_sg_preset.current(0)
+        self.cb_sg_preset.grid(row=0, column=0, sticky="w")
+        ttk.Button(preset_box, text="载入预设",
+                   command=self.load_strategy_preset).grid(row=0, column=1, padx=10)
+        ttk.Label(preset_box, text="载入后点「保存参数」或直接「启动」才生效",
+                  style="Dim.TLabel").grid(row=0, column=2, sticky="w")
 
         mode_box = ttk.LabelFrame(parent, text="运行模式", padding=10)
         mode_box.pack(fill="x")
