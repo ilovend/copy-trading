@@ -27,6 +27,7 @@ INCLUDE_DIRS = {
     "bot": ["*.py"],
     "bot/strategies": ["*.py"],
     "gui": ["app.py", "theme.py"],
+    "webui": ["app.py", "index.html"],
     "docs": ["*.md"],
 }
 

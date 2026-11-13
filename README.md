@@ -161,6 +161,21 @@ private/
 `private/` 已被 `.gitignore` 忽略。公开版没有它时，程序自动回退到示例策略，
 GUI 和测试仍可正常启动。
 
+## Web 控制台（路由器/局域网）
+
+`webui/` 是无第三方依赖的手机优先控制台，适合跑在路由器或小主机上：
+
+```bash
+WEB_PASSWORD='换成长密码' python3 webui/app.py
+# 浏览器打开 http://<设备IP>:8787
+```
+
+功能：状态/持仓/账户、日志、参数保存、启动/停止/重启。
+实盘切换和实盘启动都需要在页面输入 `LIVE` 确认；停止不会市价平仓。
+
+安全提示：默认只应暴露在局域网；远程访问请走 WireGuard/Tailscale，不要直接把 8787 映射公网。
+HTTP Basic 密码在 `.env` 的 `WEB_PASSWORD` 中配置。
+
 ## 安全
 
 - API Key / Telegram token 只存在 `.env`，不进仓库
