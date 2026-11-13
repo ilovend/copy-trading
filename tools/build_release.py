@@ -21,10 +21,11 @@ sys.path.insert(0, str(ROOT / "bot"))
 
 from version import __version__  # noqa: E402
 
-INCLUDE_FILES = ["README.md", "CHANGELOG.md", "requirements.txt",
+INCLUDE_FILES = ["README.md", "CHANGELOG.md", "LICENSE", "requirements.txt",
                  ".env.example", "启动.bat", "安装依赖.bat"]
 INCLUDE_DIRS = {
     "bot": ["*.py"],
+    "bot/strategies": ["*.py"],
     "gui": ["app.py", "theme.py"],
     "docs": ["*.md"],
 }
