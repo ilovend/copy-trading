@@ -518,7 +518,8 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
     trade = cfg.get("trade") or {}
     sig = cfg.get("signal") or {}
     setup = cfg.get("setup") or {}
-    fade = cfg.get("fade") or {}
+    fade = dict(cfg.get("fade") or {})
+    fade["direction"] = str(cfg.get("direction", "short") or "short")
     basket = cfg.get("basket") or {}
     bar_s = INTERVAL_S.get(cfg.get("interval", "1m"), 60)
     hold_bars = max(1, int(round(float(trade.get("max_hold_s", 180) or 180) / bar_s)))
@@ -559,10 +560,12 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
             if fade.get("enabled"):
                 if i < block_until:
                     continue
-                if not SF.fade_signal(bars[:i + 1], fade):
+                sig_f = SF.fade_signal(bars[:i + 1], fade)
+                if not sig_f:
                     continue
                 hits += 1
-                pnl, _how, _adds, held = SF.simulate_basket(bars, i, basket, bar_s)
+                pnl, _how, _adds, held = SF.simulate_basket(
+                    bars, i, basket, bar_s, sig_f.get("side", "SHORT"))
                 block_until = i + max(1, held) + 1
             else:
                 if stage is not None:
@@ -597,6 +600,10 @@ def main() -> None:
     ap.add_argument("--interval", default="", help="覆盖 K 线周期")
     ap.add_argument("--top", type=int, default=0, help="覆盖候选池数量")
     ap.add_argument("--preset", default="", help="覆盖参数预设：scalp / swing")
+    ap.add_argument("--direction", default="", choices=["short", "long", "both"],
+                    help="覆盖方向：short / long / both")
+    ap.add_argument("--entry-pct", type=float, default=0.0, help="覆盖 1h 阈值 %%")
+    ap.add_argument("--entry-15m-pct", type=float, default=0.0, help="覆盖 15m 阈值 %%")
     args = ap.parse_args()
 
     cfg = load_cfg()
@@ -610,6 +617,12 @@ def main() -> None:
         cfg = apply_preset(cfg, args.preset)
     if args.mode:
         cfg["mode"] = args.mode
+    if args.direction:
+        cfg["direction"] = args.direction
+    if args.entry_pct:
+        cfg.setdefault("fade", {})["entry_pct"] = args.entry_pct
+    if args.entry_15m_pct:
+        cfg.setdefault("fade", {})["entry_15m_pct"] = args.entry_15m_pct
     if args.interval:
         cfg["interval"] = args.interval
     if args.top:
