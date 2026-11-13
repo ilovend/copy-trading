@@ -865,6 +865,42 @@ class StrategyEngine:
                          f"已持有 {held:.0f} 分钟，继续执行止盈/止损/超时")
         self._save_state()
 
+    def _settle_external(self, symbol: str) -> None:
+        """仓位已被交易所条件单平掉：清状态、回填真实盈亏。"""
+        pos = self.positions.pop(symbol, None)
+        if not pos:
+            return
+        self._cancel_protect(symbol, pos)
+        pnl = None
+        try:
+            rows = self._ex_client().user_trades(
+                symbol, int(float(pos.get("opened_at") or time.time()) * 1000))
+            pnl = sum(float(r.get("realizedPnl") or 0)
+                      - float(r.get("commission") or 0) for r in rows)
+        except Exception:  # noqa: BLE001
+            pnl = None
+        if pnl is not None:
+            self.realized_today += pnl
+            self.stats["pnl"] += pnl
+        self.stats["closes"] += 1
+        if (pnl or 0) > 0:
+            self.stats["wins"] += 1
+        if pnl is None:
+            reason, note = "external", "交易所已无持仓"
+        elif pnl > 0:
+            reason, note = "exchange_tp", "交易所止盈条件单成交"
+        else:
+            reason, note = "exchange_sl", "交易所止损条件单成交"
+        self._record("close", symbol=symbol, reason=reason, qty=0.0,
+                     pnl_total=round(pnl, 6) if pnl is not None else 0.0,
+                     entries=len(pos.get("entries") or []), notes=note)
+        log(f"CLOSE  {symbol:12s} {reason:12s} "
+            f"{('%.3f' % pnl) if pnl is not None else '?'}U（交易所已平）")
+        self._notify(f"✅ {symbol} 由交易所条件单平仓\n"
+                     f"{reason} 净盈亏 {pnl:+.3f}U" if pnl is not None
+                     else f"✅ {symbol} 交易所已平，状态已清理")
+        self._save_state()
+
     def _reconcile(self) -> None:
         """交易所已无持仓（手动平/强平）时，清理本地状态，避免幽灵仓位。"""
         if self.mode != "live" or not self.positions:
@@ -959,8 +995,14 @@ class StrategyEngine:
                 exit_price = float(resp.get("avgPrice") or 0) or px
                 qty = filled
             except Exception as e:  # noqa: BLE001
-                self._reject(symbol, "close_failed", str(e)[:160])
-                self._notify(f"🚨 策略平仓失败 {symbol}\n{str(e)[:150]}")
+                msg = str(e)
+                if "-2022" in msg or "ReduceOnly" in msg:
+                    # 交易所条件单先一步平掉了，引擎再平就会被 reduceOnly 拒
+                    log(f"⚠ {symbol} 平仓被拒（仓位已被条件单平掉），转入对账")
+                    self._settle_external(symbol)
+                    return True
+                self._reject(symbol, "close_failed", msg[:160])
+                self._notify(f"🚨 策略平仓失败 {symbol}\n{msg[:150]}")
                 return False
 
         pnl = (pos["avg"] - exit_price) * qty
