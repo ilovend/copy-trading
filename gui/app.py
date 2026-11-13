@@ -193,6 +193,11 @@ class App:
     def _apply_theme_widgets(self) -> None:
         """tk.Text 和 Treeview 不受 ttk 样式控制，切主题时要单独刷新。"""
         p = theme.palette(self.theme_mode)
+        st = ttk.Style(self.root)
+        st.configure("Dim.TEntry", foreground=p["dim"], fieldbackground=p["bg"])
+        st.map("Dim.TEntry",
+               foreground=[("disabled", p["dim"])],
+               fieldbackground=[("disabled", p["bg"])])
         logs = [self.log] + ([self.slog] if getattr(self, "slog", None) is not None else [])
         for w in logs:
             w.configure(bg=p["log_bg"], fg=p["log_fg"],
@@ -1242,7 +1247,10 @@ class App:
             w = getattr(self, "sg_widgets", {}).get(key)
             if w is not None:
                 try:
-                    w.configure(state="disabled" if on else "normal")
+                    if on:
+                        w.configure(state="disabled", style="Dim.TEntry")
+                    else:
+                        w.configure(state="normal", style="TEntry")
                 except Exception:  # noqa: BLE001
                     pass
         if hasattr(self, "var_sg_basket_note"):

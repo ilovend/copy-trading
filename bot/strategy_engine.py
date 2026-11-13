@@ -474,6 +474,13 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         side = str(detail.get("side") or "SHORT").upper()
         dir_txt = "多" if side == "LONG" else "空"
         bid, ask = self._book(symbol)
+        max_spread = float(self.trade.get("max_spread_pct", 0) or 0)
+        if max_spread > 0 and bid > 0 and ask > 0:
+            spread = (ask - bid) / bid * 100
+            if spread > max_spread:
+                self._reject(symbol, "spread",
+                             f"点差 {spread:.2f}% > {max_spread:g}%")
+                return False
         max_slip = float(self.trade.get("max_slippage_pct", 0.3) or 0.3)
         if bid > 0:
             slip = (signal_price - bid) / signal_price * 100

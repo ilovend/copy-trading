@@ -36,9 +36,10 @@ COMMON_FIELDS = (
                     ("单笔名义 (U)", "trade.notional"),
                     ("最多同时持仓", "trade.max_positions"),
                     ("止损 %", "trade.sl_pct"),
-                    ("最长持仓 (秒)", "trade.max_hold_s"),
+                    ("最长持仓 (秒，传统)", "trade.max_hold_s"),
                     ("当日亏损上限 (U)", "trade.max_daily_loss"),
                     ("滑点上限 %", "trade.max_slippage_pct"),
+                    ("最大点差 %", "trade.max_spread_pct"),
                     ("杠杆", "trade.leverage"),
                     ("IOC 缓冲 %", "trade.ioc_buffer_pct"),
                     ("强平时间 HH:MM", "trade.cutoff"),
@@ -46,14 +47,14 @@ COMMON_FIELDS = (
                     ("入场等待 (秒)", "trade.entry_timeout_s"),
                     ("止盈方式", "trade.tp_mode"))),
     ("加仓与分批止盈", (("加仓窗口 (秒)", "trade.add_window_s"),
-                        ("最多加仓次数", "trade.max_adds"),
+                        ("最多加仓次数（传统）", "trade.max_adds"),
                         ("加仓最小涨幅 %", "trade.add_min_gain_pct"),
                         ("止盈1 触发 %", "trade.tp1_pct"),
                         ("止盈1 平仓比例", "trade.tp1_frac"),
                         ("止盈2 触发 %", "trade.tp2_pct"),
                         ("止盈2 平仓比例", "trade.tp2_frac"),
                         ("追踪启动 %", "trade.trail_activate_pct"),
-                        ("追踪回撤 pp", "trade.trail_gap_pct"))),
+                        ("追踪回撤 pp（传统）", "trade.trail_gap_pct"))),
 )
 
 FADE_FIELDS = (
