@@ -1,5 +1,13 @@
 # 更新日志
 
+## v1.13.1（2026-11-13）
+
+- `copy_engine` 的 Telegram 发送改用 `notify.tg_send`（不再从 `listen_copy` 取）
+- 解耦后的依赖次数：`copy_engine` 被依赖 6 → 1；`listen_copy` 7 → 5
+  （剩余主要是 bapi 会话 API，P2 再抽 `bapi.py`）
+
+---
+
 ## v1.13.0（2026-11-13）
 
 架构解耦 P0 + P1：策略不再依赖复制模块，配置加载加校验。

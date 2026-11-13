@@ -231,7 +231,7 @@ class CopyEngine:
         while True:
             text = self._notify_q.get()
             try:
-                from listen_copy import tg_send
+                from notify import tg_send
                 if not tg_send(text):
                     log("telegram 未配置或发送失败")
             except Exception as e:  # noqa: BLE001
