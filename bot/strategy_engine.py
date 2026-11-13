@@ -432,7 +432,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                              f"买一 {bid:g} 比信号价低 {slip:.2f}% > {max_slip:g}%")
                 return False
 
-        notional = float(self.trade.get("notional", 10.0) or 10.0)
+        _bn = self.basket.get("notional") if self.basket_on else None
+        notional = float(_bn or self.trade.get("notional", 10.0) or 10.0)
         flt = self._flt(symbol)
         qty = self._floor_step(notional / signal_price, flt["step"])
         mn = flt["min_notional"] * 1.01
@@ -761,10 +762,23 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             entry = float(r.get("entryPrice") or 0) or float(p.get("avg") or 0)
             qty = amt
             side = "SHORT" if float(r.get("positionAmt") or 0) < 0 else "LONG"
+            saved_entries = [e for e in (p.get("entries") or [])
+                             if float(e.get("qty") or 0) > 0
+                             and float(e.get("price") or 0) > 0]
+            if saved_entries and abs(sum(float(e["qty"]) for e in saved_entries) - qty) \
+                    <= max(1e-9, qty * 0.01):
+                entries = [{"qty": float(e["qty"]), "price": float(e["price"]),
+                            "ts": float(e.get("ts") or time.time())}
+                           for e in saved_entries]
+                avg = sum(e["qty"] * e["price"] for e in entries) / sum(
+                    e["qty"] for e in entries)
+            else:
+                entries = [{"qty": qty, "price": entry, "ts": time.time()}]
+                avg = entry
             self.positions[sym] = {
                 "symbol": sym, "mode": self.mode, "side": side,
-                "entries": [{"qty": qty, "price": entry, "ts": time.time()}],
-                "qty": qty, "avg": entry,
+                "entries": entries,
+                "qty": qty, "avg": avg,
                 "opened_at": float(p.get("opened_at") or time.time()),
                 "peak": 0.0, "trail_on": False, "trail_level": 0.0,
                 "tp_done": [False, False], "realized": 0.0, "parts": 0,
@@ -787,8 +801,9 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         try:
             rows = self._ex_client().user_trades(
                 symbol, int(float(pos.get("opened_at") or time.time()) * 1000))
-            pnl = sum(float(r.get("realizedPnl") or 0)
-                      - float(r.get("commission") or 0) for r in rows)
+            pnl = (sum(float(r.get("realizedPnl") or 0)
+                       - float(r.get("commission") or 0) for r in rows)
+                   - float(pos.get("realized") or 0))
         except Exception:  # noqa: BLE001
             pnl = None
         if pnl is not None:
@@ -860,7 +875,21 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             r = live.get(sym)
             amt = abs(float(r.get("positionAmt") or 0)) if r else 0
             if amt > 0:
-                self.positions[sym].pop("_miss", None)
+                pos = self.positions[sym]
+                pos.pop("_miss", None)
+                if abs(amt - float(pos["qty"])) > max(1e-9, float(pos["qty"]) * 0.005):
+                    pos["_qty_miss"] = int(pos.get("_qty_miss", 0)) + 1
+                    if pos["_qty_miss"] >= 2:
+                        px = float(r.get("entryPrice") or 0) or pos["avg"]
+                        log(f"⚠ {sym} 交易所持仓 {amt:g} 与本地 {pos['qty']:g} 不一致，"
+                            f"按交易所校正")
+                        pos["qty"] = amt
+                        if px > 0:
+                            pos["avg"] = px
+                        pos.pop("_qty_miss", None)
+                        self._place_protect(sym, pos)
+                else:
+                    pos.pop("_qty_miss", None)
                 continue
             pos = self.positions[sym]
             pos["_miss"] = int(pos.get("_miss", 0)) + 1
@@ -873,8 +902,9 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             try:
                 rows = self._ex_client().user_trades(
                     sym, int(float(pos.get("opened_at") or now) * 1000))
-                pnl = sum(float(r.get("realizedPnl") or 0)
-                          - float(r.get("commission") or 0) for r in rows)
+                pnl = (sum(float(r.get("realizedPnl") or 0)
+                           - float(r.get("commission") or 0) for r in rows)
+                       - float(pos.get("realized") or 0))
             except Exception:  # noqa: BLE001
                 pnl = None
             if pnl is None:
