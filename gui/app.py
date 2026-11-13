@@ -1222,7 +1222,7 @@ class App:
         preset_box.pack(fill="x")
         self._preset_labels = {"复刻带单员：暴涨做空 + 有限加仓": "fade",
                                "宽止盈·15m 信号（TP4/SL6）": "fade_wide",
-                               "复刻（首跑实盘：5U×3 笔、单币）": "fade_live",
+                               "实盘：5U×6、单币、15m 信号、追踪止盈": "fade_live",
                                "激进·100U（10U×6、日亏≤15U）": "aggr_100",
                                "激进·500U（20U×6、日亏≤30U）": "aggr_500"}
         self.cb_sg_preset = ttk.Combobox(preset_box, values=list(self._preset_labels),
