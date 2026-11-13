@@ -14,6 +14,7 @@ import base64
 import hmac
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -120,6 +121,70 @@ def set_path(data: dict, key: str, value) -> None:
     cur[parts[-1]] = value
 
 
+def _norm(v):
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v.strip())
+        except ValueError:
+            return v.strip().lower()
+    return v
+
+
+def _flatten(d: dict, prefix: str = "") -> dict:
+    out = {}
+    for k, v in (d or {}).items():
+        p = f"{prefix}{k}"
+        if isinstance(v, dict):
+            out.update(_flatten(v, p + "."))
+        else:
+            out[p] = v
+    return out
+
+
+def preset_info(cfg: dict) -> dict:
+    try:
+        import strategy_config as SC
+        import strategy_registry as REG
+        sid = str(cfg.get("strategy") or "")
+        spec = REG.get(sid)
+        name = spec.name if spec else sid
+        best = None
+        for pid, preset in SC.PRESETS.items():
+            if str(preset.get("strategy")) != sid:
+                continue
+            ok = True
+            for path, val in _flatten(preset).items():
+                if path == "mode":
+                    continue
+                if _norm(get_path(cfg, path)) != _norm(val):
+                    ok = False
+                    break
+            if ok:
+                best = pid
+                break
+        label = SC.PRESET_LABELS.get(best, "") if best else ""
+        return {"strategy_id": sid, "strategy_name": name,
+                "preset_id": best or "", "preset_label": label or "自定义参数"}
+    except Exception:
+        return {"strategy_id": "", "strategy_name": "", "preset_id": "", "preset_label": ""}
+
+
+def rss_mb():
+    try:
+        r = subprocess.run(["pgrep", "-f", "bot/strategy_run.py"],
+                           capture_output=True, text=True, timeout=2)
+        pids = [x.strip() for x in (r.stdout or "").splitlines() if x.strip()]
+        if not pids:
+            return None
+        text = Path(f"/proc/{pids[0]}/status").read_text(encoding="utf-8", errors="replace")
+        m = re.search(r"^VmRSS:\s+(\d+)\s+kB", text, re.M)
+        return round(int(m.group(1)) / 1024, 1) if m else None
+    except Exception:
+        return None
+
+
 def service_status() -> str:
     try:
         r = subprocess.run([INIT, "status"], capture_output=True, text=True, timeout=3)
@@ -133,15 +198,20 @@ def service_status() -> str:
         return f"unknown ({str(e)[:60]})"
 
 
-def tail_log(n: int = 160) -> list[str]:
+def tail_log(n: int = 160, events_only: bool = False) -> list[str]:
     try:
         if not LOG.exists():
             return []
         raw = LOG.read_bytes()
         if len(raw) > 512_000:
             raw = raw[-512_000:]
-        text = raw.decode("utf-8", "replace")
-        return text.splitlines()[-max(10, min(n, 500)):]
+        lines = raw.decode("utf-8", "replace").splitlines()
+        if events_only:
+            skip = ("统计", "状态", "候选池更新", "WS 已连接", "REST 兜底",
+                    "配置来源", "exchangeInfo", "自研策略 v", "策略：", "均价模式", "追踪止盈")
+            pat = re.compile(r"(信号\s{2,}|SKIP|OPEN\??|CLOSE\??|ADD\??|⛔|异常|失败|错误|Traceback|NameError|KeyError|-20\d\d|-41\d\d)")
+            lines = [x for x in lines if not any(s in x for s in skip) and pat.search(x)]
+        return lines[-max(10, min(n, 500)):]
     except Exception as e:  # noqa: BLE001
         return [f"读取日志失败: {e}"]
 
@@ -171,6 +241,8 @@ def snapshot() -> dict:
         "status": st,
         "positions": pos if isinstance(pos, dict) else {},
         "config": {k: get_path(cfg, k) for k in FIELDS},
+        "meta": preset_info(cfg),
+        "rss_mb": rss_mb(),
     }
 
 
@@ -240,7 +312,8 @@ class Handler(BaseHTTPRequestHandler):
                 n = int((q.get("lines") or ["160"])[0])
             except ValueError:
                 n = 160
-            return self._json({"ok": True, "lines": tail_log(n)})
+            events = (q.get("filter") or [""])[0] == "events"
+            return self._json({"ok": True, "lines": tail_log(n, events)})
         if self.path.startswith("/api/account"):
             return self._json({"ok": True, **account()})
         if self.path.startswith("/api/config"):

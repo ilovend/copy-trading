@@ -270,7 +270,7 @@ class Runner:
                     if now - getattr(self, "_last_status_log", 0) >= 600:
                         self._last_status_log = now
                         log(f"状态   候选 {len(self.universe)} · bars {len(self.bars)} · "
-                            f"WS {now - self._last_msg:.0f}s 前 · 队列 {self.signals.qsize()} · "
+                            f"WS {max(0.0, now - self._last_msg):.0f}s 前 · 队列 {self.signals.qsize()} · "
                             f"信号 {self.engine.stats['signals']} · "
                             f"拒绝 {self.engine.stats['rejects']}")
                 if now - self._last_summary >= 300:
@@ -291,7 +291,7 @@ class Runner:
             "mode": self.engine.mode, "universe": len(self.universe),
             "bars": len(self.bars), "positions": len(self.engine.positions),
             "queue": self.signals.qsize(),
-            "ws_age_s": round(now - self._last_msg, 1),
+            "ws_age_s": round(max(0.0, now - self._last_msg), 1),
             "bar_age_s": round(now - latest / 1000, 1) if latest else None,
             "stats": dict(self.engine.stats),
             "realized_today": round(self.engine.realized_today, 3),

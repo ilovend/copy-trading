@@ -14,7 +14,7 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
   font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif}
-header{position:sticky;top:0;z-index:5;background:rgba(16,18,21,.95);
+header{position:sticky;top:0;z-index:5;background:rgba(16,18,21,.96);
   border-bottom:1px solid var(--line);padding:12px 14px;display:flex;flex-wrap:wrap;
   gap:8px;align-items:center;backdrop-filter:blur(8px)}
 h1{font-size:16px;margin:0;font-weight:600;margin-right:auto}
@@ -24,24 +24,23 @@ h1{font-size:16px;margin:0;font-weight:600;margin-right:auto}
 .badge.dry{color:#1a1a1a;background:var(--warn);border-color:var(--warn)}
 .badge.shadow{color:var(--muted)}
 .badge.ok{color:var(--ok);border-color:rgba(74,222,128,.4)}
-.badge.err{color:var(--err);border-color:rgba(255,123,114,.4)}
 main{padding:12px;max-width:1100px;margin:0 auto;display:grid;gap:12px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
 .card h2{font-size:13px;color:var(--muted);font-weight:600;margin:0 0 10px;letter-spacing:.02em}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.kv{display:flex;flex-direction:column;gap:2px}
+.kv{display:flex;flex-direction:column;gap:2px;min-width:0}
 .kv .k{font-size:11px;color:var(--dim)}
-.kv .v{font-size:17px;font-variant-numeric:tabular-nums}
+.kv .v{font-size:17px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 button{font:inherit;border:1px solid var(--line);background:#20252c;color:var(--fg);
   padding:9px 12px;border-radius:9px;cursor:pointer;min-height:38px}
 button:active{transform:scale(.98)}
+button:disabled{opacity:.32;cursor:not-allowed}
 button.primary{background:var(--accent);color:#06131a;border-color:var(--accent);font-weight:600}
-button.danger{background:#3a1d1f;color:#ffb4ae;border-color:#5a2a2d}
 button.stop{background:var(--live);color:#fff;border-color:var(--live);font-weight:700}
 select,input{font:inherit;background:#12151a;color:var(--fg);border:1px solid var(--line);
   border-radius:8px;padding:8px 9px;min-height:38px;width:100%}
-label.field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
+label.field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted);min-width:0}
 .form{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}
 .note{font-size:12px;color:var(--dim);line-height:1.5}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
@@ -58,7 +57,33 @@ pre{background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:10
 .live-warn{display:none;border:1px solid #6b2a2a;background:#2a1517;color:#ffb4ae;
   padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px}
 .live-warn.show{display:block}
-@media (max-width:520px){h1{font-size:15px}main{padding:9px}.card{padding:10px}}
+
+/* 参数折叠 */
+details.card{padding:0}
+details.card > summary{list-style:none;cursor:pointer;padding:12px;display:flex;
+  flex-wrap:wrap;align-items:center;gap:8px}
+details.card > summary::-webkit-details-marker{display:none}
+details.card > summary::after{content:"展开";margin-left:auto;color:var(--dim);font-size:12px}
+details.card[open] > summary::after{content:"收起"}
+details.card[open] > summary{border-bottom:1px solid var(--line)}
+.sum-title{font-size:13px;color:var(--muted);font-weight:600}
+.sum-sub{font-size:12px;color:var(--dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cfg-body{padding:12px}
+details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:none}
+
+@media (max-width:640px){
+  header{padding:9px 10px;gap:6px}
+  h1{font-size:15px;flex-basis:100%;margin-right:0}
+  main{padding:8px;gap:9px}
+  .card{padding:10px}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .form{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kv .v{font-size:15px}
+  button{padding:8px 10px;min-height:36px}
+  details.card > summary{padding:10px}
+  .cfg-body{padding:10px}
+  .sum-sub{white-space:normal;line-height:1.35}
+}
 </style>
 </head>
 <body>
@@ -75,9 +100,10 @@ pre{background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:10
     <h2>运行状态</h2>
     <div class="grid">
       <div class="kv"><span class="k">候选币</span><span class="v" id="universe">--</span></div>
-      <div class="kv"><span class="k">持仓数</span><span class="v" id="posCount">--</span></div>
+      <div class="kv"><span class="k">策略持仓</span><span class="v" id="posCount">--</span></div>
       <div class="kv"><span class="k">WS 延迟</span><span class="v" id="wsAge">--</span></div>
       <div class="kv"><span class="k">今日已实现</span><span class="v" id="realized">--</span></div>
+      <div class="kv"><span class="k">进程内存</span><span class="v" id="rss">--</span></div>
       <div class="kv"><span class="k">最后更新</span><span class="v" id="updated" style="font-size:13px">--</span></div>
     </div>
   </section>
@@ -93,6 +119,14 @@ pre{background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:10
   </section>
 
   <section class="card">
+    <h2>策略持仓</h2>
+    <div style="overflow:auto"><table>
+      <thead><tr><th>币</th><th>方向</th><th>数量</th><th>均价</th><th>加仓</th></tr></thead>
+      <tbody id="posBody"><tr><td colspan="5" class="note">暂无持仓</td></tr></tbody>
+    </table></div>
+  </section>
+
+  <section class="card">
     <h2>控制</h2>
     <div class="live-warn" id="liveWarn">当前为实盘模式，操作会真实下单。请确认。</div>
     <div class="row" style="margin-bottom:10px">
@@ -103,61 +137,61 @@ pre{background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:10
     <p class="note">停止只停策略进程，不会市价平仓；交易所条件单仍保留。</p>
   </section>
 
-  <section class="card">
-    <h2>参数</h2>
-    <div class="form">
-      <label class="field">模式
-        <select id="f_mode">
-          <option value="shadow">影子：只记录</option>
-          <option value="live_dry">干跑：不发送</option>
-          <option value="live">实盘：真实下单</option>
-        </select>
-      </label>
-      <label class="field">执行周期
-        <select id="f_interval"><option>1m</option><option>3m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
-      </label>
-      <label class="field">信号周期
-        <select id="f_signal_interval"><option>1m</option><option>3m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
-      </label>
-      <label class="field">方向
-        <select id="f_direction"><option value="short">只做空</option><option value="long">只做多</option><option value="both">多空</option></select>
-      </label>
-      <label class="field">单笔名义 (U)<input id="f_trade_notional" inputmode="decimal"></label>
-      <label class="field">最多同时持仓<input id="f_trade_max_positions" inputmode="numeric"></label>
-      <label class="field">日亏上限 (U)<input id="f_trade_max_daily_loss" inputmode="decimal"></label>
-      <label class="field">最大点差 %<input id="f_trade_max_spread_pct" inputmode="decimal"></label>
-      <label class="field">杠杆<input id="f_trade_leverage" inputmode="numeric"></label>
-      <label class="field">入场方式
-        <select id="f_trade_entry_mode"><option value="maker">maker</option><option value="taker">taker</option></select>
-      </label>
-      <label class="field">basket 单笔 (U)<input id="f_basket_notional" inputmode="decimal"></label>
-      <label class="field">均价止盈 %<input id="f_basket_basket_tp_pct" inputmode="decimal"></label>
-      <label class="field">硬止损 %<input id="f_basket_hard_stop_pct" inputmode="decimal"></label>
-      <label class="field">加仓步长 %<input id="f_basket_add_step_pct" inputmode="decimal"></label>
-      <label class="field">最多加仓<input id="f_basket_max_adds" inputmode="numeric"></label>
-      <label class="field">追踪启动 %<input id="f_basket_trail_activate_pct" inputmode="decimal"></label>
-      <label class="field">追踪回撤 pp<input id="f_basket_trail_gap_pct" inputmode="decimal"></label>
+  <details class="card" id="configCard">
+    <summary>
+      <span class="sum-title">参数</span>
+      <span class="sum-sub" id="cfgTitle">加载中…</span>
+    </summary>
+    <div class="cfg-body">
+      <div class="live-warn" id="liveWarnCfg">当前为实盘模式，保存会真实生效。请确认。</div>
+      <div class="form">
+        <label class="field">模式
+          <select id="f_mode">
+            <option value="shadow">影子：只记录</option>
+            <option value="live_dry">干跑：不发送</option>
+            <option value="live">实盘：真实下单</option>
+          </select>
+        </label>
+        <label class="field">执行周期
+          <select id="f_interval"><option>1m</option><option>3m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
+        </label>
+        <label class="field">信号周期
+          <select id="f_signal_interval"><option>1m</option><option>3m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
+        </label>
+        <label class="field">方向
+          <select id="f_direction"><option value="short">只做空</option><option value="long">只做多</option><option value="both">多空</option></select>
+        </label>
+        <label class="field">单笔名义 (U)<input id="f_notional" inputmode="decimal"></label>
+        <label class="field">最多同时持仓<input id="f_trade_max_positions" inputmode="numeric"></label>
+        <label class="field">日亏上限 (U)<input id="f_trade_max_daily_loss" inputmode="decimal"></label>
+        <label class="field">最大点差 %<input id="f_trade_max_spread_pct" inputmode="decimal"></label>
+        <label class="field">杠杆<input id="f_trade_leverage" inputmode="numeric"></label>
+        <label class="field">入场方式
+          <select id="f_trade_entry_mode"><option value="maker">maker</option><option value="taker">taker</option></select>
+        </label>
+        <label class="field">均价止盈 %<input id="f_basket_basket_tp_pct" inputmode="decimal"></label>
+        <label class="field">硬止损 %<input id="f_basket_hard_stop_pct" inputmode="decimal"></label>
+        <label class="field">加仓步长 %<input id="f_basket_add_step_pct" inputmode="decimal"></label>
+        <label class="field">最多加仓<input id="f_basket_max_adds" inputmode="numeric"></label>
+        <label class="field">追踪启动 %<input id="f_basket_trail_activate_pct" inputmode="decimal"></label>
+        <label class="field">追踪回撤 pp<input id="f_basket_trail_gap_pct" inputmode="decimal"></label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btnSave">保存并重启</button>
+        <label class="note" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="restartAfterSave" checked style="width:auto;min-height:auto"> 保存后重启策略
+        </label>
+      </div>
+      <p class="note">单笔名义同时写入 trade 和 basket，避免两处改串。实盘保存必须输入 <b>LIVE</b>；运行中改参数不会热更新。</p>
     </div>
-    <div class="row" style="margin-top:10px">
-      <button class="primary" id="btnSave">保存并重启</button>
-      <label class="note" style="display:flex;align-items:center;gap:6px">
-        <input type="checkbox" id="restartAfterSave" checked style="width:auto;min-height:auto"> 保存后重启策略
-      </label>
-    </div>
-    <p class="note">实盘模式保存时必须输入 <b>LIVE</b>；运行中改参数不会热更新，保存后重启才生效。</p>
-  </section>
-
-  <section class="card">
-    <h2>策略持仓</h2>
-    <div style="overflow:auto"><table>
-      <thead><tr><th>币</th><th>方向</th><th>数量</th><th>均价</th><th>加仓</th></tr></thead>
-      <tbody id="posBody"><tr><td colspan="5" class="note">暂无持仓</td></tr></tbody>
-    </table></div>
-  </section>
+  </details>
 
   <section class="card">
     <h2>日志</h2>
     <div class="row" style="margin-bottom:8px">
+      <label class="note" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="onlyEvents" style="width:auto;min-height:auto"> 只看成交/异常
+      </label>
       <label class="note" style="display:flex;align-items:center;gap:6px">
         <input type="checkbox" id="autoScroll" checked style="width:auto;min-height:auto"> 自动滚动
       </label>
@@ -192,6 +226,12 @@ function fmt(v, digits=2) {
   if (v === null || v === undefined || v === '') return '--';
   const n = Number(v); return Number.isFinite(n) ? n.toFixed(digits) : String(v);
 }
+function updateButtons(service) {
+  const running = service === 'running';
+  $('btnStart').disabled = running;
+  $('btnRestart').disabled = !running;
+  $('btnStop').disabled = !running;
+}
 function setMode(mode, service) {
   currentMode = mode;
   const m = $('modeBadge');
@@ -203,55 +243,65 @@ function setMode(mode, service) {
   if (service === 'running') { s.classList.add('ok'); s.textContent = '运行中'; }
   else { s.textContent = service || '未知'; }
   $('liveWarn').classList.toggle('show', mode === 'live');
+  $('liveWarnCfg').classList.toggle('show', mode === 'live');
+  updateButtons(service);
+}
+function setMeta(meta) {
+  meta = meta || {};
+  const bits = [meta.strategy_name, meta.preset_label].filter(Boolean);
+  $('cfgTitle').textContent = bits.length ? bits.join(' · ') : '当前策略';
 }
 function fillConfig(values) {
   if (!values || loadedConfig) return;
   loadedConfig = true;
   const map = {
     mode:'f_mode', interval:'f_interval', signal_interval:'f_signal_interval',
-    direction:'f_direction',
-    'trade.notional':'f_trade_notional', 'trade.max_positions':'f_trade_max_positions',
+    direction:'f_direction', 'trade.max_positions':'f_trade_max_positions',
     'trade.max_daily_loss':'f_trade_max_daily_loss', 'trade.max_spread_pct':'f_trade_max_spread_pct',
     'trade.leverage':'f_trade_leverage', 'trade.entry_mode':'f_trade_entry_mode',
-    'basket.notional':'f_basket_notional', 'basket.basket_tp_pct':'f_basket_basket_tp_pct',
-    'basket.hard_stop_pct':'f_basket_hard_stop_pct', 'basket.add_step_pct':'f_basket_add_step_pct',
-    'basket.max_adds':'f_basket_max_adds', 'basket.trail_activate_pct':'f_basket_trail_activate_pct',
-    'basket.trail_gap_pct':'f_basket_trail_gap_pct',
+    'basket.basket_tp_pct':'f_basket_basket_tp_pct', 'basket.hard_stop_pct':'f_basket_hard_stop_pct',
+    'basket.add_step_pct':'f_basket_add_step_pct', 'basket.max_adds':'f_basket_max_adds',
+    'basket.trail_activate_pct':'f_basket_trail_activate_pct', 'basket.trail_gap_pct':'f_basket_trail_gap_pct',
   };
   for (const [k,id] of Object.entries(map)) {
     const el = $(id); if (!el) continue;
     const v = values[k]; if (v !== null && v !== undefined) el.value = v;
   }
+  const n = values['basket.notional'] ?? values['trade.notional'];
+  if (n !== null && n !== undefined) $('f_notional').value = n;
 }
 function readValues() {
   const out = {};
   const map = {
     mode:'f_mode', interval:'f_interval', signal_interval:'f_signal_interval',
-    direction:'f_direction',
-    'trade.notional':'f_trade_notional', 'trade.max_positions':'f_trade_max_positions',
+    direction:'f_direction', 'trade.max_positions':'f_trade_max_positions',
     'trade.max_daily_loss':'f_trade_max_daily_loss', 'trade.max_spread_pct':'f_trade_max_spread_pct',
     'trade.leverage':'f_trade_leverage', 'trade.entry_mode':'f_trade_entry_mode',
-    'basket.notional':'f_basket_notional', 'basket.basket_tp_pct':'f_basket_basket_tp_pct',
-    'basket.hard_stop_pct':'f_basket_hard_stop_pct', 'basket.add_step_pct':'f_basket_add_step_pct',
-    'basket.max_adds':'f_basket_max_adds', 'basket.trail_activate_pct':'f_basket_trail_activate_pct',
-    'basket.trail_gap_pct':'f_basket_trail_gap_pct',
+    'basket.basket_tp_pct':'f_basket_basket_tp_pct', 'basket.hard_stop_pct':'f_basket_hard_stop_pct',
+    'basket.add_step_pct':'f_basket_add_step_pct', 'basket.max_adds':'f_basket_max_adds',
+    'basket.trail_activate_pct':'f_basket_trail_activate_pct', 'basket.trail_gap_pct':'f_basket_trail_gap_pct',
   };
   for (const [k,id] of Object.entries(map)) {
     const el = $(id); if (el && el.value !== '') out[k] = el.value;
   }
+  const n = $('f_notional').value;
+  if (n !== '') { out['trade.notional'] = n; out['basket.notional'] = n; }
   return out;
 }
 async function refresh() {
   try {
     const st = await api('/api/status');
     const s = st.status || {};
-    setMode((st.config && st.config.mode) || s.mode || 'shadow', st.service);
+    const cfg = st.config || {};
+    setMode(cfg.mode || s.mode || 'shadow', st.service);
+    setMeta(st.meta);
     $('universe').textContent = s.universe ?? '--';
     $('posCount').textContent = s.positions ?? '--';
-    $('wsAge').textContent = s.ws_age_s == null ? '--' : `${Number(s.ws_age_s).toFixed(1)}s`;
+    $('wsAge').textContent = s.ws_age_s == null ? '--' : `${Math.max(0, Number(s.ws_age_s)).toFixed(1)}s`;
     $('realized').textContent = s.realized_today == null ? '--' : `${Number(s.realized_today).toFixed(2)}U`;
+    $('rss').textContent = st.rss_mb == null ? '--' : `${Number(st.rss_mb).toFixed(1)}MB`;
     $('updated').textContent = s.time || '--';
-    if (!loadedConfig && st.config) fillConfig(st.config);
+    if (!loadedConfig && cfg) fillConfig(cfg);
     const ps = st.positions || {};
     const keys = Object.keys(ps);
     const body = $('posBody');
@@ -261,7 +311,7 @@ async function refresh() {
       return `<tr><td>${k}</td><td>${p.side||''}</td><td>${fmt(p.qty,4)}</td>
         <td>${fmt(p.avg,6)}</td><td>${(p.entries||[]).length}</td></tr>`;
     }).join('');
-    const err = $('err'); err.style.display = 'none';
+    $('err').style.display = 'none';
   } catch (e) {
     const err = $('err'); err.style.display = 'block';
     err.textContent = '刷新失败：' + e.message;
@@ -276,7 +326,9 @@ async function refresh() {
 }
 async function refreshLog() {
   try {
-    const d = await api('/api/log?lines=' + $('logLines').value);
+    const q = new URLSearchParams({lines:$('logLines').value});
+    if ($('onlyEvents').checked) q.set('filter','events');
+    const d = await api('/api/log?' + q.toString());
     const el = $('log');
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
     el.textContent = (d.lines || []).join('\n') || '（空）';
@@ -316,6 +368,7 @@ $('btnRestart').onclick = () => control('restart');
 $('btnStop').onclick = () => control('stop');
 $('btnSave').onclick = save;
 $('logLines').onchange = refreshLog;
+$('onlyEvents').onchange = refreshLog;
 refresh(); refreshLog();
 setInterval(refresh, 3000);
 setInterval(refreshLog, 2500);
