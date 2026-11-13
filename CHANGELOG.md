@@ -1,5 +1,20 @@
 # 更新日志
 
+## v1.14.0（2026-11-13）
+
+P3 第一步：拆分 `strategy_engine`（纯结构调整，行为不变）。
+
+- `strategy_engine.py` 1159 → **961 行**
+- 新增 `strategy_basket.py`（88 行）：均价加仓 Mixin（`_manage_basket` / `_basket_add`）
+- 新增 `strategy_protect.py`（113 行）：交易所条件单 Mixin
+  （`_cancel_protect` / `_wait_no_algo` / `_place_one_protect` / `_place_protect`）
+- 新增 `logutil.py`（28 行）：日志输出，避免 Mixin 与引擎循环 import
+- `StrategyEngine(BasketMixin, ProtectMixin)`，方法用 MRO 组合，调用点不变
+- 全部测试通过：形态 7/7、两段式 4/4、maker 4/4、引擎 ALL PASS、
+  过滤/守卫/拉黑加仓/残留清理/对账
+
+---
+
 ## v1.13.3（2026-11-13）
 
 P2 第二步：抽 `bapi.py`（登录态 + 私有接口）。

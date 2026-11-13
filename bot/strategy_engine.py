@@ -19,6 +19,8 @@ from datetime import datetime, time as dtime
 from pathlib import Path
 
 import symbol_filter as FILTER
+from strategy_basket import BasketMixin
+from strategy_protect import ProtectMixin
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "bot" / "data"
@@ -27,28 +29,9 @@ DATA.mkdir(parents=True, exist_ok=True)
 INTERVAL_S = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
 
 
-_LOG_FILE = None
+from logutil import log, set_log_file  # noqa: E402
+
 STATE_PATH = Path(__file__).resolve().parent / "data" / "strategy-open.json"
-
-
-def set_log_file(path) -> None:
-    """把日志同时写到文件（无人值守排障用）。"""
-    global _LOG_FILE
-    try:
-        _LOG_FILE = open(path, "a", encoding="utf-8")
-    except Exception:  # noqa: BLE001
-        _LOG_FILE = None
-
-
-def log(msg: str) -> None:
-    line = f"{datetime.now():%H:%M:%S} {msg}"
-    print(line, flush=True)
-    if _LOG_FILE is not None:
-        try:
-            _LOG_FILE.write(line + "\n")
-            _LOG_FILE.flush()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def ladder_of(trade: dict) -> list[tuple[float, float]]:
@@ -117,7 +100,7 @@ def simulate_exit(bars: list[dict], start: int, trade: dict,
     return realized, reason, held
 
 
-class StrategyEngine:
+class StrategyEngine(BasketMixin, ProtectMixin):
     def __init__(self, cfg: dict, notify: bool | None = None) -> None:
         self.cfg = cfg
         self.mode = cfg.get("mode", "shadow")
@@ -692,186 +675,6 @@ class StrategyEngine:
                 self._close_partial(symbol, "timeout", mark, 1.0)
 
     # ------------------------------------------------------- 均价摊平（复刻）
-    def _manage_basket(self, symbol: str, pos: dict, mark: float, now: float) -> None:
-        """暴涨做空 + 逆行加仓 + 回均价止盈，带硬止损与时间止损。"""
-        b = self.basket
-        pnl = (pos["avg"] - mark) / pos["avg"] * 100
-        pos["peak"] = max(pos["peak"], pnl)
-        tp = float(b.get("basket_tp_pct", 0.5) or 0.5)
-        hard = float(b.get("hard_stop_pct", 6.0) or 6.0)
-        hold = float(b.get("max_hold_s", 3600) or 3600)
-        if pnl >= tp:
-            self._close_partial(symbol, "basket_tp", mark, 1.0)
-            return
-        if pnl <= -hard:
-            self._close_partial(symbol, "basket_stop", mark, 1.0)
-            return
-        if now - pos["opened_at"] >= hold:
-            self._close_partial(symbol, "basket_timeout", mark, 1.0)
-            return
-        step = float(b.get("add_step_pct", 1.26) or 1.26)
-        max_adds = int(b.get("max_adds", 3) or 0)
-        adds = len(pos["entries"]) - 1
-        last = float(pos.get("last_add_pnl", 0.0))
-        if adds < max_adds and (last - pnl) >= step - 1e-9:
-            allowed, why = FILTER.is_allowed(symbol)
-            if not allowed:
-                if not pos.get("_add_blocked_logged"):
-                    pos["_add_blocked_logged"] = True
-                    log(f"{symbol:12s} 已被过滤（{why}），停止加仓")
-                return
-            if now - float(pos.get("last_add_try", 0) or 0) >= 30:
-                pos["last_add_try"] = now
-                self._basket_add(symbol, pos, mark, pnl)
-
-    def _basket_add(self, symbol: str, pos: dict, mark: float, pnl: float) -> None:
-        b = self.basket
-        notional = float(b.get("notional", self.trade.get("notional", 5)) or 5)
-        flt = self._flt(symbol)
-        qty = self._floor_step(notional / mark, flt["step"])
-        mn = flt["min_notional"] * 1.01
-        if qty <= 0 or qty * mark < mn:      # 最小名义优先，向上补一个步长
-            qty = self._floor_step(mn / mark + flt["step"], flt["step"])
-        if qty <= 0:
-            return
-        bid, ask = self._book(symbol)
-        px = self._ioc_price(symbol, "SELL", bid, ask, mark)
-        log(f"ADD?   {symbol:12s} 逆行加仓 #{len(pos['entries'])} qty={qty:g} px={px:g}")
-        entry = px
-        if self.mode == "live":
-            try:
-                self._ensure_leverage(symbol)
-                resp = self._send(symbol, "SELL", qty, px, "SHORT")
-            except Exception as e:  # noqa: BLE001
-                log(f"⚠ 加仓失败 {symbol}: {e}")
-                return
-            filled = float(resp.get("executedQty") or 0)
-            if filled <= 0:
-                log(f"⚠ 加仓未成交 {symbol}")
-                return
-            qty = filled
-            entry = float(resp.get("avgPrice") or 0) or px
-        pos["entries"].append({"qty": qty, "price": entry, "ts": time.time()})
-        pos["qty"] = sum(e["qty"] for e in pos["entries"])
-        pos["avg"] = sum(e["qty"] * e["price"] for e in pos["entries"]) / pos["qty"]
-        pos["last_add_pnl"] = pnl
-        self.stats["adds"] += 1
-        self._record("add", symbol=symbol, qty=qty, price=entry,
-                     avg=round(pos["avg"], 8), total_qty=pos["qty"],
-                     notional=round(pos["qty"] * pos["avg"], 4),
-                     entries=len(pos["entries"]), mode=self.mode, reason="basket")
-        log(f"ADD    {symbol:12s} 共 {pos['qty']:g} 均价 {pos['avg']:g} "
-            f"（{len(pos['entries'])} 笔）")
-        self._notify(f"➕ 均价加空 {symbol}\n{qty:g} @ {entry:g}\n"
-                     f"共 {pos['qty']:g} 均价 {pos['avg']:g}")
-        self._cancel_protect(symbol, pos)
-        self._place_protect(symbol, pos)
-        self._save_state()
-
-    # ------------------------------------------------------- 交易所侧条件单
-    def _cancel_protect(self, symbol: str, pos: dict) -> None:
-        ids = pos.pop("protect", None) or []
-        if self.mode != "live":
-            return
-        ex = self._ex_client()
-        for oid in ids:
-            try:
-                ex.cancel_algo(symbol, oid)
-            except Exception:  # noqa: BLE001
-                pass
-        try:                          # 兜底扫一遍，避免挂单失败留下的残单
-            ex.cancel_all_algo(symbol)
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _wait_no_algo(self, ex, symbol: str, timeout: float = 2.0) -> bool:
-        """等交易所把条件单真正撤掉（撤单是异步的，立刻挂新单会 -4130）。"""
-        end = time.time() + timeout
-        while time.time() < end:
-            try:
-                if not ex.open_algo_orders(symbol):
-                    return True
-            except Exception:  # noqa: BLE001
-                pass
-            time.sleep(0.25)
-        return False
-
-    def _place_one_protect(self, ex, symbol: str, kind: str, price: float,
-                           ps: str | None, qty: float | None = None,
-                           working_type: str = "MARK_PRICE") -> int | None:
-        """挂单个条件单，处理「旧单还没撤干净」(-4130) 与连接抖动。"""
-        last_msg = ""
-        for attempt in range(1, 5):
-            try:
-                r = ex.stop_close(symbol, "BUY", price, kind=kind,
-                                  position_side=ps, qty=qty,
-                                  working_type=working_type)
-                return r.get("algoId") or r.get("orderId")
-            except Exception as e:  # noqa: BLE001
-                msg = str(e)
-                last_msg = msg
-                if "-4130" in msg:
-                    try:
-                        ex.cancel_all_algo(symbol)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    self._wait_no_algo(ex, symbol, 2.0)
-                    time.sleep(0.2 * attempt)
-                    continue
-                # 连接类错误：订单可能实际已挂上，查一次再说
-                try:
-                    for row in ex.open_algo_orders(symbol):
-                        trig = float(row.get("triggerPrice") or 0)
-                        if (row.get("orderType") == kind
-                                and abs(trig - price) <= max(price * 0.002, 1e-9)):
-                            return row.get("algoId")
-                except Exception:  # noqa: BLE001
-                    pass
-                time.sleep(0.3)
-        log(f"⚠ {kind} 条件单失败 {symbol}: {last_msg}")
-        return None
-
-    def _place_protect(self, symbol: str, pos: dict) -> None:
-        """开仓/加仓后，在交易所挂「全平」止盈止损条件单，进程挂了也有保护。"""
-        if self.mode != "live" or not self.basket_on or not self.protect_on:
-            return
-        b = self.basket
-        tp = float(b.get("basket_tp_pct", 0) or 0)
-        hard = float(b.get("hard_stop_pct", 0) or 0)
-        if tp <= 0 or hard <= 0:
-            return
-        avg = float(pos["avg"])
-        tick = self._flt(symbol)["tick"]
-        sl_px = self._tick_round(avg * (1 + hard / 100), tick)
-        tp_px = self._tick_round(avg * (1 - tp / 100), tick)
-        ps = "SHORT" if self._is_hedge() else None
-        ex = self._ex_client()
-        # 加仓后均价变了：先把旧条件单撤干净，否则新单会被 -4130 拒
-        try:
-            n = ex.cancel_all_algo(symbol)
-            if n:
-                log(f"保护单 撤掉旧条件单 {n} 张")
-            self._wait_no_algo(ex, symbol, 2.0)
-        except Exception:  # noqa: BLE001
-            pass
-        ids = []
-        sl_work = str(b.get("sl_working_type", "MARK_PRICE") or "MARK_PRICE")
-        tp_work = str(b.get("tp_working_type", "CONTRACT_PRICE") or "CONTRACT_PRICE")
-        sl_id = self._place_one_protect(ex, symbol, "STOP_MARKET", sl_px, ps,
-                                       working_type=sl_work)
-        if sl_id:
-            ids.append(sl_id)
-        tp_id = self._place_one_protect(ex, symbol, "TAKE_PROFIT_MARKET", tp_px, ps,
-                                       qty=pos["qty"], working_type=tp_work)
-        if tp_id:
-            ids.append(tp_id)
-        pos["protect"] = ids
-        if ids:
-            log(f"PROTECT {symbol:12s} 止损 {sl_px:g} / 止盈 {tp_px:g}（交易所条件单）")
-            self._notify(f"🛡 {symbol} 已挂交易所条件单\n"
-                         f"止损 {sl_px:g}（-{hard:g}%）/ 止盈 {tp_px:g}（+{tp:g}%）")
-
-    # ------------------------------------------------------- 持仓持久化 / 对账
     def _save_state(self) -> None:
         """把策略持仓写到磁盘，重启后能接管（避免重启变成裸仓）。"""
         if self.mode != "live":
