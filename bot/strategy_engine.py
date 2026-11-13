@@ -131,6 +131,7 @@ class StrategyEngine:
         self.basket = cfg.get("basket") or {}
         self.basket_on = bool(self.basket.get("enabled"))
         self.protect_on = bool(self.basket.get("protect", True))
+        self._symbol_stop: dict[str, dict] = {}
 
         self.positions: dict[str, dict] = {}
         self._cooldown: dict[str, float] = {}
@@ -319,6 +320,13 @@ class StrategyEngine:
         if not self.cooldown_ok(symbol):
             self._reject(symbol, "cooldown", "冷却中")
             return False
+        guard = self._symbol_stop.get(symbol)
+        if guard and bool(self.trade.get("post_stop_guard", True)):
+            if signal_price >= float(guard.get("price") or 0):
+                self._reject(symbol, "post_stop",
+                             f"上次止损 {guard.get('price'):g}，价格还没跌回去，不追空")
+                return False
+            self._symbol_stop.pop(symbol, None)
         if self.mode == "live":
             try:
                 amt = self._ex_client().position(symbol, "SHORT" if self._is_hedge() else None)
@@ -908,6 +916,11 @@ class StrategyEngine:
             reason, note = "exchange_tp", "交易所止盈条件单成交"
         else:
             reason, note = "exchange_sl", "交易所止损条件单成交"
+            hard = float(self.basket.get("hard_stop_pct", 0) or 0)
+            self._symbol_stop[symbol] = {
+                "price": float(pos["avg"]) * (1 + hard / 100),
+                "ts": time.time(),
+            }
         self._record("close", symbol=symbol, reason=reason, qty=0.0,
                      pnl_total=round(pnl, 6) if pnl is not None else 0.0,
                      entries=len(pos.get("entries") or []), notes=note)
@@ -1046,6 +1059,9 @@ class StrategyEngine:
                 self._reject(symbol, "close_failed", msg[:160])
                 self._notify(f"🚨 策略平仓失败 {symbol}\n{msg[:150]}")
                 return False
+
+        if reason in ("stop_loss", "basket_stop"):
+            self._symbol_stop[symbol] = {"price": exit_price, "ts": time.time()}
 
         pnl = (pos["avg"] - exit_price) * qty
         pos["qty"] = max(0.0, remaining - qty)
