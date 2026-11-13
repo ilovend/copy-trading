@@ -1942,7 +1942,11 @@ class App:
             while True:
                 kind, payload = self.q.get_nowait()
                 if kind == "log":
-                    name, text = payload
+                    # 兼容两种格式：("log", "文本") 与 ("log", ("strategy", "文本"))
+                    if isinstance(payload, (tuple, list)) and len(payload) == 2:
+                        name, text = payload
+                    else:
+                        name, text = "", str(payload)
                     target = self.slog if name in ("strategy", "replay") else self.log
                     self._append(text, self._tag_for(text), target)
                 elif kind == "rows":
@@ -1961,7 +1965,10 @@ class App:
                         self._append("登录态更新失败，看上面的输出", "err")
         except queue.Empty:
             pass
-        self.root.after(120, self._drain)
+        except Exception as e:  # noqa: BLE001
+            self._append(f"日志队列异常: {e}", "err")
+        finally:
+            self.root.after(120, self._drain)
 
     @staticmethod
     def _tag_for(line: str) -> str:
