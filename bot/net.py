@@ -17,12 +17,12 @@ _PUB_LOCK = threading.Lock()
 
 
 def http_json(url: str, timeout: int = 10):
-    """GET 一个 JSON，复用连接；多线程下加锁串行，失败自动重连。"""
+    """GET 一个 JSON，复用连接；检查 HTTP 状态码，限频时退避重试。"""
     global _PUB_CONN
     path = url.replace(f"https://{FAPI_HOST}", "")
     with _PUB_LOCK:
         last: Exception | None = None
-        for _ in range(3):
+        for attempt in range(3):
             try:
                 if _PUB_CONN is None:
                     _PUB_CONN = http.client.HTTPSConnection(FAPI_HOST, timeout=timeout)
@@ -31,10 +31,27 @@ def http_json(url: str, timeout: int = 10):
                                            "Connection": "keep-alive"})
                 resp = _PUB_CONN.getresponse()
                 raw = resp.read()
+                status = resp.status
                 if resp.getheader("connection", "").lower() == "close":
                     _PUB_CONN.close()
                     _PUB_CONN = None
-                return json.loads(raw.decode())
+                try:
+                    body = json.loads(raw.decode())
+                except Exception:  # noqa: BLE001
+                    body = None
+                if status >= 400:
+                    code = body.get("code") if isinstance(body, dict) else None
+                    msg = (body.get("msg") if isinstance(body, dict)
+                           else raw[:200].decode("utf-8", "replace"))
+                    err = RuntimeError(f"HTTP {status} code={code}: {msg}")
+                    if status in (418, 429, 500, 502, 503, 504) and attempt < 2:
+                        last = err
+                        time.sleep(1.0 * (attempt + 1))
+                        continue
+                    raise err
+                if body is None:
+                    raise RuntimeError(f"非 JSON 响应: {raw[:120]!r}")
+                return body
             except Exception as e:  # noqa: BLE001
                 last = e
                 try:

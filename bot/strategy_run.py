@@ -69,6 +69,8 @@ def scan_universe(cfg: dict) -> list[str]:
     min_qv = float(u.get("min_quote_volume", 50e6) or 0)
     sort_by = str(u.get("sort_by") or "change").lower()
     rows = http_json(f"{FAPI}/fapi/v1/ticker/24hr", timeout=20)
+    if not isinstance(rows, list):
+        raise RuntimeError(f"ticker 返回非列表: {type(rows).__name__} {str(rows)[:120]}")
     cand = []
     for r in rows:
         sym = str(r.get("symbol") or "")
@@ -94,6 +96,8 @@ def fetch_bars(symbol: str, interval: str, limit: int = BARS_KEEP) -> list[dict]
     from net import http_json
     rows = http_json(f"{FAPI}/fapi/v1/klines?symbol={symbol}&interval={interval}"
                      f"&limit={limit}", timeout=15)
+    if not isinstance(rows, list):
+        raise RuntimeError(f"klines 返回非列表: {type(rows).__name__} {str(rows)[:120]}")
     out = []
     for k in rows:
         out.append({"t": int(k[0]), "o": float(k[1]), "h": float(k[2]),

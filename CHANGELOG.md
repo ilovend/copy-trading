@@ -1,5 +1,29 @@
 # 更新日志
 
+## v1.20.9（2026-11-14）
+
+修复「涨榜扫描失败: 'str' object has no attribute 'get'」。
+
+### 原因
+
+- 大量分析请求触发币安 429，`/ticker/24hr` 返回错误 JSON
+- `net.http_json` 不检查 HTTP 状态码，把 `{"code":...}` 当列表遍历，
+  元素变成字符串 `"code"` / `"msg"`，调用 `.get` 抛异常
+
+### 修复
+
+- `http_json` 检查 `status >= 400`，解析 `code/msg` 抛出清晰错误
+- 429/418/5xx 自动退避重试（1s、2s）
+- `scan_universe` / `fetch_bars` 校验返回必须是列表，否则报明确错误
+- 实测扫描恢复：36 个候选
+
+### 新增分析工具
+
+- `bot/perf_dist.py`：盈亏分布、最大回撤、最大连亏、一次止损等价笔数
+- `bot/maker_quality.py`：maker 成交率、溢价、1m/5m MFE/MAE、点差
+
+---
+
 ## v1.20.8（2026-11-14）
 
 新增可选的 ATR 自适应追踪回撤，默认仍用固定 0.3pp。
