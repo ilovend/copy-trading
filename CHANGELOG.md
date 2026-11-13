@@ -1,5 +1,19 @@
 # 更新日志
 
+## v1.16.3（2026-11-13）
+
+打包自动化：本地脚本 + GitHub Actions。
+
+- `tools/build_release.py`：一条命令生成 `dist/copy-trading-<版本>.zip`
+  （自动读 `bot/version.py`，排除密钥/配置/日志/截图，输出大小与 SHA256）
+- `打包.bat`：双击即可打包
+- `.github/workflows/release.yml`：推送 `v*` tag 时自动
+  · 安装依赖、`compileall` 校验
+  · 生成 zip 并上传 Artifact
+  · 自动创建 GitHub Release 并附上 zip
+
+---
+
 ## v1.16.2（2026-11-13）
 
 ### 发布包

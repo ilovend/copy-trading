@@ -1,0 +1,41 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: python -m pip install -r requirements.txt
+
+      - name: Compile check
+        run: python -m compileall -q bot gui
+
+      - name: Build zip
+        run: python tools/build_release.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: copy-trading-package
+          path: dist/*.zip
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
