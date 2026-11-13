@@ -181,7 +181,7 @@ class App:
 
         logframe = ttk.LabelFrame(parent, text="实时日志", padding=(8, 6))
         logframe.pack(fill="both", expand=True)
-        self.log = tk.Text(logframe, height=9, wrap="none", font=(theme.MONO, 10),
+        self.log = tk.Text(logframe, height=12, wrap="none", font=(theme.MONO, 10),
                            relief="flat", borderwidth=0, padx=8, pady=6)
         self._log_toolbar(logframe, self.log)
         lsb = ttk.Scrollbar(logframe, orient="vertical", command=self.log.yview)
@@ -1043,6 +1043,10 @@ class App:
         self.cb_leverage.bind("<<ComboboxSelected>>", lambda _e: self._apply_aj_mode())
         self._apply_aj_mode()
 
+        ttk.Label(right, style="Dim.TLabel", justify="left", wraplength=330, text=(
+            "灰色输入框只在对应模式下生效："
+            "「每笔金额」→ 固定金额；「杠杆倍数」→ 固定杠杆。"
+        )).pack(anchor="w", pady=(8, 0))
         ttk.Button(right, text="保存配置", command=self.save_aj).pack(anchor="w", pady=(10, 0))
         ttk.Label(right, style="Dim.TLabel", justify="left", wraplength=330, text=(
             "· 只对「收藏」里的带单员生效，先点刷新收藏\n"
@@ -1383,6 +1387,9 @@ class App:
         ttk.Label(mode_box, textvariable=self.var_sg_int_warn,
                   style="Danger.TLabel", wraplength=820).grid(
             row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
+        ttk.Label(mode_box, style="Dim.TLabel", text=(
+            "执行账户 API 在顶栏「账户配置」，复制与自研策略共用同一组。"
+        )).grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
 
         self.sg_fields_host = ttk.Frame(parent)
         self.sg_fields_host.pack(fill="x")
