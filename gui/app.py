@@ -1095,6 +1095,7 @@ class App:
         for w in self.sg_fields_host.winfo_children():
             w.destroy()
         self.sg_vars = {}
+        self.sg_widgets = {}
         spec = REG.get(getattr(self, "active_strategy", "fade")) or REG.all()[0]
         for title, fields in list(spec.fields) + list(self._SG_COMMON):
             box = ttk.LabelFrame(self.sg_fields_host, text=title, padding=10)
@@ -1112,11 +1113,13 @@ class App:
                            "trade.entry_mode": ["taker", "maker"],
                            "trade.tp_mode": ["taker", "maker"]}.get(key)
                 if choices:
-                    ttk.Combobox(cell, textvariable=var, width=13,
-                                 state="readonly", values=choices).pack(side="left")
+                    w = ttk.Combobox(cell, textvariable=var, width=13,
+                                     state="readonly", values=choices)
                 else:
-                    ttk.Entry(cell, textvariable=var, width=15).pack(side="left")
+                    w = ttk.Entry(cell, textvariable=var, width=15)
+                w.pack(side="left")
                 self.sg_vars[key] = var
+                self.sg_widgets[key] = w
 
     def _collect_sg_fields(self) -> None:
         """把当前字段收进 sg_cfg（切换策略前调用，避免丢编辑）。"""
@@ -1138,6 +1141,29 @@ class App:
                 cur = cur.setdefault(part, {})
             cur[parts[-1]] = val
 
+    _BASKET_MUTEX = (
+        "trade.notional", "trade.sl_pct",
+        "trade.add_window_s", "trade.max_adds", "trade.add_min_gain_pct",
+        "trade.tp1_pct", "trade.tp1_frac", "trade.tp2_pct", "trade.tp2_frac",
+        "trade.trail_activate_pct", "trade.trail_gap_pct",
+    )
+
+    def _apply_basket_state(self) -> None:
+        on = bool(getattr(self, "var_sg_basket", None) and self.var_sg_basket.get())
+        for key in self._BASKET_MUTEX:
+            w = getattr(self, "sg_widgets", {}).get(key)
+            if w is not None:
+                try:
+                    w.configure(state="disabled" if on else "normal")
+                except Exception:  # noqa: BLE001
+                    pass
+        if hasattr(self, "var_sg_basket_note"):
+            self.var_sg_basket_note.set(
+                "已启用均价模式：上面「止损 %」与「加仓与分批止盈」不生效，"
+                "实际由 basket 的止盈/硬止损/加仓参数接管。"
+                if on else
+                "未启用均价模式：使用上面的「止损 %」与分批止盈/追踪参数。")
+
     def switch_strategy(self) -> None:
         sid = self._strategy_labels.get(self.cb_strategy.get())
         if not sid or sid == getattr(self, "active_strategy", ""):
@@ -1157,6 +1183,7 @@ class App:
         self.var_sg_fade.set(sid == "fade")
         self.var_sg_basket.set(sid == "fade")
         self.var_sg_setup.set(sid == "two_stage")
+        self._apply_basket_state()
         self._append(f"已切换策略：{spec.name}", "info", self.slog)
 
     def _sg_fill(self, cfg: dict) -> None:
@@ -1187,6 +1214,7 @@ class App:
         self.var_sg_trig_bear.set(bool((cfg.get("setup") or {}).get("trig_bearish", True)))
         self.var_sg_fade.set(bool((cfg.get("fade") or {}).get("enabled", False)))
         self.var_sg_basket.set(bool((cfg.get("basket") or {}).get("enabled", False)))
+        self._apply_basket_state()
 
     def load_strategy_preset(self) -> None:
         name = self._preset_labels.get(self.cb_sg_preset.get(), "scalp")
@@ -1293,6 +1321,11 @@ class App:
         self.var_sg_basket = tk.BooleanVar()
         ttk.Checkbutton(parent, text="启用均价加仓模式（basket：逆行加仓 + 回均价止盈）",
                         variable=self.var_sg_basket).pack(anchor="w", pady=(4, 0))
+        self.var_sg_basket_note = tk.StringVar(value="")
+        ttk.Label(parent, textvariable=self.var_sg_basket_note,
+                  style="Hint.TLabel", wraplength=860, justify="left").pack(
+            anchor="w", pady=(2, 0))
+        self.var_sg_basket.trace_add("write", lambda *_: self._apply_basket_state())
         ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=860, text=(
             "HTF 位置由 1m 聚合得到：要求信号那根的高点落在 HTF 区间的「高位阈值」以上"
             "（1.0 = 正好是区间最高），且收盘价相对 HTF 均线至少偏离「HTF 偏离 ATR」个 ATR。"
@@ -1357,6 +1390,9 @@ class App:
                    command=self.report_compare).pack(side="left", padx=8)
         ttk.Label(btns, style="Dim.TLabel", text="回放只读，不会下单").pack(
             side="left", padx=6)
+        self.var_sg_reload_hint = tk.StringVar(value="")
+        ttk.Label(btns, textvariable=self.var_sg_reload_hint,
+                  style="Hint.TLabel").pack(side="left", padx=(10, 0))
 
         logframe = ttk.LabelFrame(parent, text="策略日志", padding=(8, 6))
         logframe.pack(fill="both", expand=True, pady=(12, 0))
@@ -1725,6 +1761,14 @@ class App:
         self.jobs.pop(name, None)
         self._refresh_job_status()
 
+    def _refresh_reload_hint(self) -> None:
+        if not hasattr(self, "var_sg_reload_hint"):
+            return
+        if self._alive("strategy"):
+            self.var_sg_reload_hint.set("策略运行中：改参数不会热更新，先停止再启动")
+        else:
+            self.var_sg_reload_hint.set("参数保存后点「启动」生效")
+
     def _refresh_live_badge(self) -> None:
         if not any(self._alive(n) for n in ("copy", "strategy", "autojoin")):
             if self.lbl_live.winfo_manager():
@@ -1772,6 +1816,7 @@ class App:
                              "warn" if code else "info")
         self._refresh_job_status()
         self._refresh_live_badge()
+        self._refresh_reload_hint()
         self.root.after(800, self._poll)
 
     def _refresh_job_status(self) -> None:
