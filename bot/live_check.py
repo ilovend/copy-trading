@@ -45,6 +45,9 @@ def main() -> None:
     need = notional * (1 + max_adds) * max_pos
     blockers: list[str] = []
     warnings: list[str] = []
+    from trade_lock import is_trade_lock_busy
+    if is_trade_lock_busy():
+        warnings.append("另一个实盘进程正在运行（复制/策略），直接启动会与它冲突")
 
     print(f"=== 预检 · 预设 {args.preset} ===")
     print(f"模式 {cfg.get('mode')} · 周期 {cfg.get('interval')} · "

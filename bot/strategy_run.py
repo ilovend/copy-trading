@@ -628,6 +628,11 @@ def main() -> None:
         replay(cfg, args.replay)
         return
 
+    if cfg.get("mode") == "live":
+        from trade_lock import acquire_trade_lock
+        if not acquire_trade_lock("strategy"):
+            sys.exit(1)
+
     runner = Runner(cfg)
     acquire_single_instance()
     set_log_file(ROOT / "bot" / "data" /

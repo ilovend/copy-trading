@@ -34,6 +34,10 @@ def main() -> None:
     L.set_signal_hook(engine.on_signal)
     cfg = engine.cfg
     exec_mode = cfg.get("mode", "shadow")
+    if exec_mode == "live":
+        from trade_lock import acquire_trade_lock
+        if not acquire_trade_lock("copy"):
+            sys.exit(1)
     from version import __version__
     print(f"[copy] v{__version__} 执行模式={exec_mode}  比例={cfg['ratio_mode']} k={cfg['k']} "
           f"权益={cfg['exec_equity']}U 单笔≤{cfg['max_order_notional']}U "
