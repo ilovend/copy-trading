@@ -452,12 +452,17 @@ class Runner:
     async def run(self) -> None:
         from version import __version__
         trade = self.engine.trade
-        log(f"自研策略 v{__version__} 启动：模式={self.engine.mode} "
-            f"周期={self.interval} 单笔={trade.get('notional')}U "
-            f"止损={trade.get('sl_pct')}% 阶梯={ladder_of(trade)} "
-            f"追踪={trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp "
-            f"加仓={trade.get('max_adds')}次/{trade.get('add_window_s')}s "
-            f"最长持仓={trade.get('max_hold_s')}s")
+        if self.engine.basket_on:
+            b = self.engine.basket
+            log(f"自研策略 v{__version__} 启动：模式={self.engine.mode} "
+                f"周期={self.interval} 单笔={b.get('notional')}U 均价模式")
+        else:
+            log(f"自研策略 v{__version__} 启动：模式={self.engine.mode} "
+                f"周期={self.interval} 单笔={trade.get('notional')}U "
+                f"止损={trade.get('sl_pct')}% 阶梯={ladder_of(trade)} "
+                f"追踪={trade.get('trail_activate_pct')}%/{trade.get('trail_gap_pct')}pp "
+                f"加仓={trade.get('max_adds')}次/{trade.get('add_window_s')}s "
+                f"最长持仓={trade.get('max_hold_s')}s")
         log(f"策略：{self.sid} · 方向 {self.cfg.get('direction', 'short')} · "
             f"执行 {self.interval} / 信号 {self.cfg.get('signal_interval', self.interval)}")
         if self.interval != "1m":
