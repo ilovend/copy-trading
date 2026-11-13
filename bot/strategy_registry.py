@@ -140,7 +140,7 @@ def infer(cfg: dict) -> str:
 
 
 register(StrategySpec(
-    id="fade", name="复刻带单员：暴涨做空", tab="复刻做空",
+    id="fade", name="复刻带单员：暴涨做空", tab="自研策略",
     desc=("1h 急涨 + 15m 仍在冲 → 做空；逆行加仓、回均价止盈，"
           "交易所条件单兜底，止损后不追、垂直拉升当天拉黑。"),
     kind="fade", fields=FADE_FIELDS,
