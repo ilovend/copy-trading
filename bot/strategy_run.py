@@ -437,8 +437,15 @@ class Runner:
             f"执行 {self.interval} / 信号 {self.cfg.get('signal_interval', self.interval)}")
         if self.interval != "1m":
             log("⚠ 执行周期不是 1m：1h/15m 涨幅会按该周期 K 线计算，语义与 1m 不同")
-        if str(self.cfg.get("signal_interval", "1m")) < self.interval:
+        _bar_s = INTERVAL_S.get(self.interval, 60)
+        _sig_s = INTERVAL_S.get(str(self.cfg.get("signal_interval") or self.interval), _bar_s)
+        if _sig_s < _bar_s:
             log("⚠ 信号周期小于执行周期，实际会按执行周期每根判断")
+        if self.engine.basket_on:
+            b = self.engine.basket
+            log(f"均价模式：止盈 {b.get('basket_tp_pct')}% / 止损 {b.get('hard_stop_pct')}% / "
+                f"加仓 {b.get('add_step_pct')}%×{b.get('max_adds')} / "
+                f"持仓上限 {b.get('max_hold_s')}s")
         if self.sid != "fade" and str(self.cfg.get("direction", "short")) != "short":
             log("⚠ 当前策略只做空，direction 设置被忽略")
         await asyncio.to_thread(self.engine.load_filters)

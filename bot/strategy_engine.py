@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, time as dtime
+import os
 from pathlib import Path
 
 import symbol_filter as FILTER
@@ -23,7 +24,7 @@ from strategy_basket import BasketMixin
 from strategy_protect import ProtectMixin
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "bot" / "data"
+DATA = Path(os.environ.get("STRATEGY_DATA_DIR") or (ROOT / "bot" / "data"))
 DATA.mkdir(parents=True, exist_ok=True)
 
 INTERVAL_S = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
@@ -236,9 +237,35 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             self._halt = ""
             log("跨日：已实现盈亏与熔断状态重置")
 
+    def _income_today(self) -> float:
+        """交易所当日已实现盈亏（含手续费与资金费）。"""
+        start = int(datetime.now().replace(hour=0, minute=0, second=0,
+                                           microsecond=0).timestamp() * 1000)
+        rows = self._ex_client().income(start, 1000)
+        total = sum(float(r.get("income") or 0) for r in rows
+                    if r.get("incomeType") in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"))
+        return round(total, 6)
+
     def _load_realized_today(self) -> float:
+        # 实盘以交易所流水为准（准确、含费用、不受本地测试台账影响）
+        if self.mode == "live":
+            try:
+                return self._income_today()
+            except Exception as e:  # noqa: BLE001
+                log(f"⚠ 读交易所今日盈亏失败，回退台账: {str(e)[:80]}")
+        elif self.mode == "live_dry":
+            return 0.0          # 干跑只统计本次进程内的模拟盈亏，避免旧台账干扰
+        return self._ledger_realized()   # 影子模式保留重启续算（研究用）
+
+    def _ledger_realized(self) -> float:
+        """从台账重建今日已实现盈亏（按 symbol 分回合，避免重复计算）。
+
+        一次仓位可能先有若干 close_partial，最后一条 close 的 pnl_total 已包含它们；
+        所以每个 symbol 用「累积 partial → 遇到 close 用 pnl_total 结算」的方式。
+        """
         path = DATA / f"strategy-{datetime.now():%Y%m%d}.jsonl"
         total = 0.0
+        partial: dict[str, float] = {}
         if not path.exists():
             return 0.0
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -246,8 +273,15 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                 r = json.loads(line)
             except Exception:  # noqa: BLE001
                 continue
-            if r.get("kind") in ("close", "close_partial"):
-                total += float(r.get("pnl") or 0)
+            sym = str(r.get("symbol") or "")
+            kind = r.get("kind")
+            if kind == "close_partial":
+                partial[sym] = partial.get(sym, 0.0) + float(r.get("pnl") or 0)
+            elif kind == "close":
+                done = r.get("pnl_total")
+                total += float(done) if done is not None else partial.get(sym, 0.0)
+                partial[sym] = 0.0
+        total += sum(partial.values())
         return total
 
     def _record(self, kind: str, **fields) -> None:
