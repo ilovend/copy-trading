@@ -1,5 +1,25 @@
 # 更新日志
 
+## v1.20.4（2026-11-13）
+
+修复实盘 `-2027 Exceeded the maximum allowable position at current leverage`。
+
+### 原因
+
+SOPHUSDT 的账户杠杆是 20x，但该币种最高只允许 10x；
+策略没开「自动设置杠杆」，直接用了账户默认的 20x，下单被拒。
+
+### 改动
+
+- `ExecClient.leverage_bracket(symbol)` 查询币种杠杆档位
+- `_ensure_leverage` 设置失败时，自动改用该币种允许的最大杠杆；
+  仍失败则不标记，下次开仓前重试
+- `fade_live` 预设启用 `manage_leverage=true`、`leverage=10`
+- 已手动把 SOPHUSDT 设为 10x（maxNotional 从 0 恢复为 10000）
+- 策略已停止；重新启动后生效
+
+---
+
 ## v1.20.3（2026-11-13）
 
 修复制启动即退出：`listen_copy` 缺少 `log`。

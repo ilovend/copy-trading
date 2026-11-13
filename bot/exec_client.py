@@ -161,6 +161,12 @@ class ExecClient:
             total += float(r.get("positionAmt") or 0)
         return total
 
+    def leverage_bracket(self, symbol: str) -> list[dict]:
+        """该币种的杠杆档位（brackets[0].initialLeverage = 最大杠杆）。"""
+        r = _request("GET", "/fapi/v1/leverageBracket", {"symbol": symbol},
+                     key=self.key, secret=self.secret)
+        return r if isinstance(r, list) else [r]
+
     def position_mode(self) -> bool:
         """True = 双向持仓（Hedge Mode），False = 单向。"""
         r = _request("GET", "/fapi/v1/positionSide/dual", key=self.key, secret=self.secret)

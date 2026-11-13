@@ -573,10 +573,19 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         if not self.trade.get("manage_leverage") or symbol in self._lev_set:
             return
         lev = int(self.trade.get("leverage", 10) or 10)
+        ex = self._ex_client()
         try:
-            self._ex_client().set_leverage(symbol, lev)
+            ex.set_leverage(symbol, lev)
         except Exception as e:  # noqa: BLE001
-            log(f"⚠ 杠杆设置失败 {symbol}: {e}")
+            log(f"⚠ 杠杆 {lev}x 设置失败 {symbol}: {str(e)[:120]}，尝试按币种上限")
+            try:
+                rows = ex.leverage_bracket(symbol)
+                max_lev = int(rows[0]["brackets"][0]["initialLeverage"])
+                ex.set_leverage(symbol, max_lev)
+                log(f"已改用 {symbol} 允许的最大杠杆 {max_lev}x")
+            except Exception as e2:  # noqa: BLE001
+                log(f"⚠ 杠杆设置仍失败 {symbol}: {str(e2)[:120]}")
+                return          # 不标记，下次开仓前再试
         self._lev_set.add(symbol)
 
     def _send(self, symbol: str, side: str, qty: float, px: float,
