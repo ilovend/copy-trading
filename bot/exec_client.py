@@ -17,6 +17,7 @@ import hmac
 import http.client
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -58,6 +59,7 @@ def load_keys() -> tuple[str, str]:
 
 
 _CONN: http.client.HTTPSConnection | None = None
+_CONN_LOCK = threading.Lock()
 
 
 def _conn() -> http.client.HTTPSConnection:
@@ -70,7 +72,11 @@ def _conn() -> http.client.HTTPSConnection:
 def _request(method: str, path: str, params: dict | None = None,
              key: str = "", secret: str = "", signed: bool = True,
              timeout: int = 10) -> dict:
-    """复用同一条 TLS 连接：实测每次 1–3 秒降到 90ms 左右。"""
+    """复用同一条 TLS 连接：实测每次 1–3 秒降到 90ms 左右。
+
+    连接是全局共享的，信号/持仓/对账/条件单多个线程都会用，
+    并发时会出 `Idle`、`CannotSendRequest`、WinError 10038，所以要加锁串行。
+    """
     global _CONN
     params = dict(params or {})
     headers = {"X-MBX-APIKEY": key, "User-Agent": "copy-exec/0.2",
@@ -84,43 +90,48 @@ def _request(method: str, path: str, params: dict | None = None,
     else:
         query = urllib.parse.urlencode(params, doseq=True)
     target = path + (f"?{query}" if query else "")
-    last: Exception | None = None
-    for _ in range(2):
-        try:
-            conn = _conn()
-            conn.request(method, target, headers=headers)
-            resp = conn.getresponse()
-            raw = resp.read()
-            if resp.getheader("connection", "").lower() == "close":
-                conn.close()
-                _CONN = None
-            body = json.loads(raw.decode())
-            if resp.status >= 400:
-                code = body.get("code") if isinstance(body, dict) else None
-                hint = {
-                    -2015: "IP 不在白名单 / 权限不足 / Key 已过期（检查 API 管理页）",
-                    -2014: "API Key 格式错误或不存在",
-                    -1022: "签名错误（Secret 不对）",
-                    -1021: "时间戳超出窗口（本机时间偏差过大）",
-                    -4061: "账户是单向持仓模式，不能带 positionSide",
-                    -4062: "账户是双向持仓模式，必须带 positionSide",
-                }.get(code)
-                msg = f"HTTP {resp.status}: {body}"
-                if hint:
-                    msg += f" → {hint}"
-                raise RuntimeError(msg)
-            return body
-        except RuntimeError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            last = e
+    with _CONN_LOCK:
+        last: Exception | None = None
+        for _ in range(3):
             try:
-                if _CONN:
-                    _CONN.close()
-            except Exception:  # noqa: BLE001
-                pass
-            _CONN = None
-    raise RuntimeError(f"request failed: {last}")
+                conn = _conn()
+                conn.request(method, target, headers=headers)
+                resp = conn.getresponse()
+                raw = resp.read()
+                if resp.getheader("connection", "").lower() == "close":
+                    conn.close()
+                    _CONN = None
+                body = json.loads(raw.decode())
+                if resp.status >= 400:
+                    code = body.get("code") if isinstance(body, dict) else None
+                    hint = {
+                        -2015: "IP 不在白名单 / 权限不足 / Key 已过期（检查 API 管理页）",
+                        -2014: "API Key 格式错误或不存在",
+                        -1022: "签名错误（Secret 不对）",
+                        -1021: "时间戳超出窗口（本机时间偏差过大）",
+                        -4061: "账户是单向持仓模式，不能带 positionSide",
+                        -4062: "账户是双向持仓模式，必须带 positionSide",
+                        -4120: "该订单类型已迁移到 /fapi/v1/algoOrder",
+                        -4130: "同方向已有条件单，先撤再挂",
+                        -4164: "名义低于最小值，需要向上补一个步长",
+                    }.get(code)
+                    msg = f"HTTP {resp.status}: {body}"
+                    if hint:
+                        msg += f" → {hint}"
+                    raise RuntimeError(msg)
+                return body
+            except RuntimeError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                last = e
+                try:
+                    if _CONN:
+                        _CONN.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                _CONN = None
+                time.sleep(0.15)
+        raise RuntimeError(f"request failed: {last}")
 
 
 class ExecClient:
@@ -235,15 +246,21 @@ class ExecClient:
 
     def stop_close(self, symbol: str, side: str, stop_price: float, *,
                    kind: str = "STOP_MARKET", position_side: str | None = None,
-                   working_type: str = "MARK_PRICE") -> dict:
-        """挂条件单全平（交易所侧托管，进程挂了也生效）。
+                   working_type: str = "MARK_PRICE",
+                   qty: float | None = None) -> dict:
+        """挂条件单（止损用全平，止盈用指定数量）。
 
-        币安 2025-12 起把条件单迁到 Algo 接口：POST /fapi/v1/algoOrder，
-        algoType=CONDITIONAL + triggerPrice + closePosition=true。
+        币安 2025-12 起把条件单迁到 Algo 接口：POST /fapi/v1/algoOrder。
+        注意：**同方向只允许一张 closePosition 条件单**（否则 -4130），
+        所以止损用 closePosition=true，止盈改用 quantity 指定数量，两者可并存。
         """
         params = {"algoType": "CONDITIONAL", "symbol": symbol, "side": side,
                   "type": kind, "triggerPrice": stop_price,
-                  "closePosition": "true", "workingType": working_type}
+                  "workingType": working_type}
+        if qty is not None:
+            params["quantity"] = qty
+        else:
+            params["closePosition"] = "true"
         if position_side:
             params["positionSide"] = position_side
         return _request("POST", "/fapi/v1/algoOrder", params,
@@ -254,6 +271,29 @@ class ExecClient:
         return _request("DELETE", "/fapi/v1/algoOrder",
                         {"symbol": symbol, "algoId": algo_id},
                         key=self.key, secret=self.secret)
+
+    def open_algo_orders(self, symbol: str) -> list[dict]:
+        """当前未触发的条件单（用于对账 / 去重）。"""
+        return _request("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol},
+                        key=self.key, secret=self.secret)
+
+    def cancel_all_algo(self, symbol: str) -> int:
+        """撤掉该币所有条件单，返回撤单数量。"""
+        n = 0
+        try:
+            rows = self.open_algo_orders(symbol)
+        except Exception:  # noqa: BLE001
+            return 0
+        for r in rows:
+            aid = r.get("algoId")
+            if not aid:
+                continue
+            try:
+                self.cancel_algo(symbol, aid)
+                n += 1
+            except Exception:  # noqa: BLE001
+                pass
+        return n
 
     def test_order(self, symbol: str, side: str, qty: float, *,
                    order_type: str = "LIMIT", price: float | None = None,

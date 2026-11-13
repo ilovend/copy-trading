@@ -124,8 +124,16 @@ DELETE /fapi/v1/algoOrder?symbol=CBRSUSDT&algoId=3000002361038907
 
 - `closePosition=true` 的订单**必须在有持仓时才能挂**，空仓会返回
   `-4509 Time in Force (TIF) GTE can only be used with open positions`；
+- **同方向只允许一张 `closePosition` 条件单**，再挂会返回
+  `-4130 An open stop or take profit order with GTE and closePosition in the direction is existing`；
+  所以止损/止盈不能都用全平：本项目**止损用 `closePosition=true`，止盈用 `quantity`**；
+- **撤单是异步的**：撤完立刻挂新单仍可能 `-4130`，要轮询
+  `GET /fapi/v1/openAlgoOrders` 直到为空（本项目等 2 秒）再挂；
+- 触发价若已在市价错误一侧，会返回 `-2021 Order would immediately trigger`；
 - 双向模式不能传 `reduceOnly`（`-1106`）；
-- 条件单**不占 IP 权重**，但计入下单频率（10s / 1min 各 1）。
+- 条件单**不占 IP 权重**，但计入下单频率（10s / 1min 各 1）；
+- 执行客户端复用同一条 TLS 连接，多线程并发会报 `Idle` /
+  `CannotSendRequest` / `WinError 10038`，`exec_client._request` 已加锁串行。
 
 ### 本项目的实现
 
