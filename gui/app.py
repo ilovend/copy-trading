@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT / "bot"))
 
 import listen_copy as L
 import strategy_config as SC  # noqa: E402
+import strategy_registry as REG  # noqa: E402
 import symbol_filter as SF  # noqa: E402
 import theme  # noqa: E402
 from version import __version__ as VERSION  # noqa: E402
@@ -239,6 +240,18 @@ class App:
             "先在「运行模式」里选影子 / 干跑 / 实盘，改完参数点「保存配置」，"
             "再回「仓位监控」页点「启动」。"
         )).pack(anchor="w", pady=(2, 10))
+
+        strat_box = ttk.LabelFrame(parent, text="策略（注册表）", padding=10)
+        strat_box.pack(fill="x", pady=(10, 0))
+        self._strategy_labels = {s.name: s.id for s in REG.all()}
+        self.cb_strategy = ttk.Combobox(strat_box, values=list(self._strategy_labels),
+                                        state="readonly", width=42)
+        self.cb_strategy.grid(row=0, column=0, sticky="w")
+        self.cb_strategy.bind("<<ComboboxSelected>>",
+                              lambda _e: self.switch_strategy())
+        ttk.Label(strat_box, style="Dim.TLabel",
+                  text="换策略会切换下方的参数字段；所有策略共用同一份配置").grid(
+            row=0, column=1, padx=10, sticky="w")
 
         mode_box = ttk.LabelFrame(parent, text="运行模式", padding=10)
         mode_box.pack(fill="x", pady=(0, 10))
@@ -1068,71 +1081,7 @@ class App:
         self.start_job("autojoin", pass_only=False, script="auto_join.py")
 
     # ------------------------------------------------------------ 自研策略 tab
-    _SG_SPEC = (
-        ("扫描", (("候选池数量", "universe.top_n"),
-                  ("24h 涨幅下限 %", "universe.min_change_pct"),
-                  ("24h 成交额下限 (U)", "universe.min_quote_volume"),
-                  ("榜单刷新 (分钟)", "universe.refresh_min"),
-                  ("榜单排序", "universe.sort_by"))),
-        ("信号", (("放量倍数 x", "signal.vol_mult"),
-                  ("波动放大 x", "signal.tr_mult"),
-                  ("拉升幅度 %", "signal.pump_pct"),
-                  ("拉升回看根数", "signal.pump_lookback"),
-                  ("实体/振幅 上限", "signal.body_max_ratio"),
-                  ("上影/振幅 下限", "signal.upper_min_ratio"),
-                  ("下影/振幅 上限", "signal.lower_max_ratio"),
-                  ("振幅/TR 下限", "signal.min_range_atr"),
-                  ("冷却根数", "signal.cooldown_bars"),
-                  ("HTF 周期(分钟)", "signal.htf_minutes"),
-                  ("HTF 回看根数", "signal.htf_lookback"),
-                  ("HTF 均线周期", "signal.htf_ema"),
-                  ("HTF 高位阈值", "signal.htf_high_zone"),
-                  ("HTF 偏离 ATR", "signal.htf_ext_atr"))),
-        ("交易与风控", (
-                  ("方向 short/long/both", "direction"),("单笔名义 (U)", "trade.notional"),
-                  ("最多同时持仓", "trade.max_positions"),
-                  ("止损 %", "trade.sl_pct"),
-                  ("最长持仓 (秒)", "trade.max_hold_s"),
-                  ("当日亏损上限 (U)", "trade.max_daily_loss"),
-                  ("滑点上限 %", "trade.max_slippage_pct"),
-                  ("杠杆", "trade.leverage"),
-                  ("IOC 缓冲 %", "trade.ioc_buffer_pct"),
-                  ("强平时间 HH:MM", "trade.cutoff"),
-                  ("入场方式", "trade.entry_mode"),
-                  ("入场等待 (秒)", "trade.entry_timeout_s"),
-                  ("止盈方式", "trade.tp_mode"))),
-        ("加仓与分批止盈", (("加仓窗口 (秒)", "trade.add_window_s"),
-                  ("最多加仓次数", "trade.max_adds"),
-                  ("加仓最小涨幅 %", "trade.add_min_gain_pct"),
-                  ("止盈1 触发 %", "trade.tp1_pct"),
-                  ("止盈1 平仓比例", "trade.tp1_frac"),
-                  ("止盈2 触发 %", "trade.tp2_pct"),
-                  ("止盈2 平仓比例", "trade.tp2_frac"),
-                  ("追踪启动 %", "trade.trail_activate_pct"),
-                  ("追踪回撤 pp", "trade.trail_gap_pct"))),
-        ("两段式：长周期预备 → 短周期放量", (
-                  ("预备周期 (分钟)", "setup.htf_minutes"),
-                  ("区间回看根数", "setup.lookback"),
-                  ("预备高位阈值", "setup.high_zone"),
-                  ("预备偏离 ATR", "setup.ext_atr"),
-                  ("预备有效根数", "setup.arm_bars"),
-                  ("触发放量倍数", "setup.trig_vol_mult"),
-                  ("允许跌离 %", "setup.trig_max_drop_pct"))),
-        ("复刻：暴涨做空 + 均价加仓", (
-                  ("1h 涨幅阈值 %", "fade.entry_pct"),
-                  ("15m 涨幅阈值 %", "fade.entry_15m_pct"),
-                  ("回看分钟", "fade.lookback_min"),
-                  ("做多放量倍数", "fade.long_vol_mult"),
-                  ("每笔名义 (U)", "basket.notional"),
-                  ("加仓步长 %", "basket.add_step_pct"),
-                  ("最多加仓次数", "basket.max_adds"),
-                  ("均价止盈 %", "basket.basket_tp_pct"),
-                  ("硬止损 %", "basket.hard_stop_pct"),
-                  ("最长持仓 (秒)", "basket.max_hold_s"),
-                  ("垂直拉升 1h %", "runaway.entry_1h_pct"),
-                  ("垂直拉升 15m %", "runaway.entry_15m_pct"),
-                  ("每日拉黑名额（0=不限）", "runaway.max_bans"))),
-    )
+    _SG_COMMON = REG.COMMON_FIELDS
 
     @staticmethod
     def _sg_get(cfg: dict, key: str):
@@ -1149,8 +1098,85 @@ class App:
             return str(int(value))
         return "" if value is None else str(value)
 
+    def _render_sg_fields(self, cfg: dict) -> None:
+        """按当前策略渲染参数字段（策略自己的分组 + 公共分组）。"""
+        for w in self.sg_fields_host.winfo_children():
+            w.destroy()
+        self.sg_vars = {}
+        spec = REG.get(getattr(self, "active_strategy", "fade")) or REG.all()[0]
+        for title, fields in list(spec.fields) + list(self._SG_COMMON):
+            box = ttk.LabelFrame(self.sg_fields_host, text=title, padding=10)
+            box.pack(fill="x", pady=(10, 0))
+            for i, (label, key) in enumerate(fields):
+                r, c = divmod(i, 2)
+                cell = ttk.Frame(box)
+                cell.grid(row=r, column=c, sticky="w", padx=(0, 26), pady=3)
+                ttk.Label(cell, text=label, width=18,
+                          style="Muted.TLabel").pack(side="left")
+                var = tk.StringVar(value=self._sg_fmt(self._sg_get(cfg, key)))
+                choices = {"universe.sort_by": ["change", "volume"],
+                           "direction": ["short", "long", "both"],
+                           "trade.entry_mode": ["taker", "maker"],
+                           "trade.tp_mode": ["taker", "maker"]}.get(key)
+                if choices:
+                    ttk.Combobox(cell, textvariable=var, width=13,
+                                 state="readonly", values=choices).pack(side="left")
+                else:
+                    ttk.Entry(cell, textvariable=var, width=15).pack(side="left")
+                self.sg_vars[key] = var
+
+    def _collect_sg_fields(self) -> None:
+        """把当前字段收进 sg_cfg（切换策略前调用，避免丢编辑）。"""
+        for key, var in self.sg_vars.items():
+            default = self._sg_get(SC.DEFAULTS, key)
+            raw = var.get().strip()
+            try:
+                if isinstance(default, int):
+                    val = int(float(raw))
+                elif isinstance(default, float):
+                    val = float(raw)
+                else:
+                    val = raw
+            except ValueError:
+                continue
+            cur = self.sg_cfg
+            parts = key.split(".")
+            for part in parts[:-1]:
+                cur = cur.setdefault(part, {})
+            cur[parts[-1]] = val
+
+    def switch_strategy(self) -> None:
+        sid = self._strategy_labels.get(self.cb_strategy.get())
+        if not sid or sid == getattr(self, "active_strategy", ""):
+            return
+        self._collect_sg_fields()
+        self.active_strategy = sid
+        self.sg_cfg["strategy"] = sid
+        spec = REG.get(sid)
+        self.var_sg_title.set(spec.name)
+        self.var_sg_desc.set(spec.desc)
+        try:
+            self.nb.tab(self.tab_strategy, text=spec.tab)
+        except Exception:  # noqa: BLE001
+            pass
+        self._render_sg_fields(self.sg_cfg)
+        self._append(f"已切换策略：{spec.name}", "info", self.slog)
+
     def _sg_fill(self, cfg: dict) -> None:
         """把配置回填到控件（启动时和载入预设时共用）。"""
+        sid = REG.infer(cfg)
+        self.active_strategy = sid
+        spec = REG.get(sid) or REG.all()[0]
+        self.var_sg_title.set(spec.name)
+        self.var_sg_desc.set(spec.desc)
+        try:
+            self.cb_strategy.set(next(k for k, v in self._strategy_labels.items()
+                                      if v == sid))
+            self.nb.tab(self.tab_strategy, text=spec.tab)
+        except Exception:  # noqa: BLE001
+            pass
+        self._render_sg_fields(cfg)
+
         cur = cfg.get("mode", "shadow")
         self.cb_sg_mode.set(next((k for k, v in self._sg_mode_labels.items()
                                   if v == cur), list(self._sg_mode_labels)[0]))
@@ -1162,8 +1188,6 @@ class App:
         self.var_sg_trig_bear.set(bool((cfg.get("setup") or {}).get("trig_bearish", True)))
         self.var_sg_fade.set(bool((cfg.get("fade") or {}).get("enabled", False)))
         self.var_sg_basket.set(bool((cfg.get("basket") or {}).get("enabled", False)))
-        for key, var in self.sg_vars.items():
-            var.set(self._sg_fmt(self._sg_get(cfg, key)))
 
     def load_strategy_preset(self) -> None:
         name = self._preset_labels.get(self.cb_sg_preset.get(), "scalp")
@@ -1179,12 +1203,12 @@ class App:
         self.sg_canvas = parent._canvas
         self.sg_vars: dict[str, tk.StringVar] = {}
 
-        ttk.Label(parent, text="自研策略", style="Section.TLabel").pack(anchor="w")
-        ttk.Label(parent, style="Hint.TLabel", justify="left", wraplength=820, text=(
-            "放量急拉之后，1m / 5m 收盘出现「阴线 + 长上影」的 pinbar 就立刻做空；"
-            "止盈 / 止损 / 超时 / 收盘前强平全自动，不扛单、不隔夜。"
-            "先用影子或干跑观察信号质量，再考虑实盘。"
-        )).pack(anchor="w", pady=(2, 10))
+        self.var_sg_title = tk.StringVar()
+        self.var_sg_desc = tk.StringVar()
+        ttk.Label(parent, textvariable=self.var_sg_title,
+                  style="Section.TLabel").pack(anchor="w")
+        ttk.Label(parent, textvariable=self.var_sg_desc, style="Hint.TLabel",
+                  justify="left", wraplength=820).pack(anchor="w", pady=(2, 10))
 
         preset_box = ttk.LabelFrame(parent, text="参数预设", padding=10)
         preset_box.pack(fill="x")
@@ -1224,25 +1248,8 @@ class App:
         ttk.Checkbutton(mode_box, text="开平仓推 Telegram",
                         variable=self.var_sg_push).grid(row=0, column=3, padx=(20, 0))
 
-        for title, fields in self._SG_SPEC:
-            box = ttk.LabelFrame(parent, text=title, padding=10)
-            box.pack(fill="x", pady=(10, 0))
-            for i, (label, key) in enumerate(fields):
-                r, c = divmod(i, 2)
-                cell = ttk.Frame(box)
-                cell.grid(row=r, column=c, sticky="w", padx=(0, 26), pady=3)
-                ttk.Label(cell, text=label, width=18, style="Muted.TLabel").pack(side="left")
-                var = tk.StringVar()
-                choices = {"universe.sort_by": ["change", "volume"],
-                           "direction": ["short", "long", "both"],
-                           "trade.entry_mode": ["taker", "maker"],
-                           "trade.tp_mode": ["taker", "maker"]}.get(key)
-                if choices:
-                    ttk.Combobox(cell, textvariable=var, width=13, state="readonly",
-                                 values=choices).pack(side="left")
-                else:
-                    ttk.Entry(cell, textvariable=var, width=15).pack(side="left")
-                self.sg_vars[key] = var
+        self.sg_fields_host = ttk.Frame(parent)
+        self.sg_fields_host.pack(fill="x")
 
         self.var_sg_lev = tk.BooleanVar()
         ttk.Checkbutton(parent, text="下单前设置该币杠杆（会改账户全局设置）",
@@ -1339,6 +1346,7 @@ class App:
 
     def save_strategy_cfg(self) -> bool:
         cfg = self.sg_cfg if getattr(self, "sg_cfg", None) else SC.load()
+        cfg["strategy"] = getattr(self, "active_strategy", "fade")
         cfg["mode"] = self._sg_mode_labels.get(self.cb_sg_mode.get(), "shadow")
         cfg["interval"] = self.cb_sg_interval.get() or "1m"
         cfg["push"] = bool(self.var_sg_push.get())

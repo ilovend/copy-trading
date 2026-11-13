@@ -1,5 +1,29 @@
 # 更新日志
 
+## v1.17.0（2026-11-13）
+
+策略插件化：标题、说明、参数字段、策略下拉全部由注册表驱动。
+
+### 新增
+
+- `bot/strategy_registry.py`：`StrategySpec(id, name, tab, desc, kind, fields, presets)`
+  · 已注册三套：`fade`（复刻做空）、`pinbar`（单根形态）、`two_stage`（两段式）
+  · 公共字段（扫描/交易与风控/加仓与分批）与各策略字段分离
+  · `infer(cfg)` 兼容没有 `strategy` 字段的老配置
+- GUI：新增「策略（注册表）」下拉；切换策略时
+  · 页面大标题/说明/标签页文字自动切换
+  · 参数区按注册表字段重建（不再写死在界面里）
+  · 切换前把当前编辑收进配置，不丢参数
+- 配置：`strategy` 字段 + 预设带 `strategy` 归属；`load()` 校验策略 id
+- 运行器/回放：信号分支改用 `strategy` 选择，不再依赖 `fade.enabled/setup.enabled`
+
+### 以后加策略
+
+写信号模块 → 注册表加一条 → 加预设；GUI 自动出现新标题和参数区。
+只有全新信号形态才需要在 `strategy_run.py` 加一个分支。
+
+---
+
 ## v1.16.3（2026-11-13）
 
 打包自动化：本地脚本 + GitHub Actions。

@@ -31,6 +31,7 @@ import websockets  # noqa: E402
 
 import strategy_volume_pinbar as SP  # noqa: E402
 import strategy_fade as SF  # noqa: E402
+import strategy_registry as REG  # noqa: E402
 from strategy_config import CONFIG_PATH, load as load_cfg  # noqa: E402
 from strategy_engine import (INTERVAL_S, StrategyEngine, ladder_of, log,  # noqa: E402
                              set_log_file, simulate_exit)
@@ -121,6 +122,7 @@ class Runner:
         self._last_sig_t: dict[str, int] = {}
         self.setup_cfg = cfg.get("setup") or {}
         self.fade_cfg = cfg.get("fade") or {}
+        self.sid = REG.infer(cfg)
         self.stages: dict[str, SP.TwoStage] = {}
 
     # ------------------------------------------------------------- 数据准备
@@ -161,11 +163,11 @@ class Runner:
                 if not bars or bars[-1].get("t") != bar["t"]:
                     continue
                 sig = None
-                if self.fade_cfg.get("enabled"):
+                if self.sid == "fade":
                     # 已有仓位时不重复开首仓（加仓由引擎按逆行触发）
                     if symbol not in self.engine.positions:
                         sig = SF.fade_signal(bars, {**self.fade_cfg, "direction": self.cfg.get("direction", "short")})
-                elif self.setup_cfg.get("enabled"):
+                elif self.sid == "two_stage":
                     stage = self.stages.get(symbol)
                     if stage is None:
                         stage = SP.TwoStage(self.setup_cfg)
@@ -432,10 +434,10 @@ class Runner:
             from notify import tg_send
             trade = self.engine.trade
             pool = len(self.universe)
-            if self.fade_cfg.get("enabled"):
+            if self.sid == "fade":
                 sig_txt = (f"暴涨做空 1h≥{self.fade_cfg.get('entry_pct')}% / "
                            f"15m≥{self.fade_cfg.get('entry_15m_pct')}%")
-            elif self.setup_cfg.get("enabled"):
+            elif self.sid == "two_stage":
                 sig_txt = f"两段式 {self.setup_cfg.get('htf_minutes')}m→1m 放量"
             else:
                 sig_txt = "单根 pinbar"
@@ -519,23 +521,24 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
     trade = cfg.get("trade") or {}
     sig = cfg.get("signal") or {}
     setup = cfg.get("setup") or {}
+    sid = REG.infer(cfg)
     fade = dict(cfg.get("fade") or {})
     fade["direction"] = str(cfg.get("direction", "short") or "short")
     basket = cfg.get("basket") or {}
     bar_s = INTERVAL_S.get(cfg.get("interval", "1m"), 60)
     hold_bars = max(1, int(round(float(trade.get("max_hold_s", 180) or 180) / bar_s)))
-    if fade.get("enabled"):
+    if sid == "fade":
         warm = max(65, int(fade.get("lookback_min", 60)) + 2)
-    elif setup.get("enabled"):
+    elif sid == "two_stage":
         warm = max(60, (int(setup.get("lookback", 12)) + 2) * int(setup.get("htf_minutes", 30)))
     else:
         warm = max(60, (int(sig.get("htf_lookback", 12)) + 2) * int(sig.get("htf_minutes", 15))
                    if sig.get("htf_enabled") else 60)
-    if fade.get("enabled"):
+    if sid == "fade":
         mode_txt = (f"暴涨做空 1h≥{fade.get('entry_pct')}% / 15m≥{fade.get('entry_15m_pct')}% "
                     f"+ 均价加仓 {basket.get('add_step_pct')}%×{basket.get('max_adds')} "
                     f"止盈 {basket.get('basket_tp_pct')}% 硬止损 {basket.get('hard_stop_pct')}%")
-    elif setup.get("enabled"):
+    elif sid == "two_stage":
         mode_txt = (f"两段式 {setup.get('htf_minutes')}m→1m 放量{setup.get('trig_vol_mult')}x"
                     f"（预备 {setup.get('arm_bars')} 根有效）")
     else:
@@ -555,10 +558,10 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
             continue
         hits = 0
         sym_pnl = 0.0
-        stage = SP.TwoStage(setup) if setup.get("enabled") else None
+        stage = SP.TwoStage(setup) if sid == "two_stage" else None
         block_until = 0
         for i in range(warm, len(bars) - 1):
-            if fade.get("enabled"):
+            if sid == "fade":
                 if i < block_until:
                     continue
                 sig_f = SF.fade_signal(bars[:i + 1], fade)

@@ -85,6 +85,7 @@ bot/
   strategy_engine.py 策略风控、下单、持仓管理
   strategy_volume_pinbar.py 放量急拉 + 上影反转信号（纯函数）
   strategy_config.py 策略参数默认值与读写（含类型/范围校验）
+  strategy_registry.py 策略注册表（标题/字段/预设/信号方式）
   net.py            公开 HTTP（复用连接 + 线程锁）
   notify.py         .env 与 Telegram 推送
   bapi.py           币安网页私有接口（登录态 + bapi 请求）
