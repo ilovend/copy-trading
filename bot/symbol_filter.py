@@ -115,7 +115,8 @@ def block(symbol: str, reason: str = "", days: int = 1) -> None:
     data = _clean(load())
     until = ""
     if days > 0:
-        until = (datetime.now() + timedelta(days=days - 1)).strftime("%Y-%m-%d")
+        # days=1 表示完整一天：至少跨到明天，避免 23:59 拉黑 1 分钟就失效
+        until = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
     data["blacklist"][symbol] = {"reason": reason, "until": until,
                                  "ts": int(time.time())}
     save(data)

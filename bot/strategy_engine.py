@@ -393,11 +393,11 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                 else:
                     ok = False
                 self._reject(symbol, "runaway" if ok else "runaway_full",
-                             f"垂直拉升 {why}，{'' if ok else '拉黑名额已满，'}今日不做")
+                             f"垂直拉升 {why}，{'' if ok else '拉黑名额已满，'}1 天内不做")
                 log(f"⛔ {symbol:12s} 垂直拉升 {why} → "
-                    f"{'今日拉黑' if ok else '名额已满，跳过本单'}")
+                    f"{'拉黑 1 天' if ok else '名额已满，跳过本单'}")
                 self._notify(f"⛔ {symbol} 垂直拉升 {why}\n"
-                             f"{'今日拉黑，不再交易该币' if ok else '拉黑名额已满，本单同样跳过'}")
+                             f"{'拉黑 1 天，不再交易该币' if ok else '拉黑名额已满，本单同样跳过'}")
                 return False
         if self.mode not in ("shadow", "live_dry", "live"):
             self._reject(symbol, "bad_mode", f"未知模式 {self.mode}")
