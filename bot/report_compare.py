@@ -51,12 +51,14 @@ def load_episodes(days: int) -> list[dict]:
     rows.sort(key=lambda r: int(r.get("ts") or 0))
 
     episodes: list[dict] = []
-    open_by_sym: dict[str, dict] = {}
+    open_by_key: dict[tuple[str, str], dict] = {}
+    last_mode: dict[str, str] = {}
 
     def finish(ep: dict, ts: int | None, reason: str = "open",
-               total: float | None = None) -> None:
+               total: float | None = None, notes: str = "") -> None:
         ep["close_ts"] = ts
         ep["reason"] = reason
+        ep["notes"] = notes
         ep["gross"] = float(total if total is not None else ep["partial"])
         ep["notional"] = sum(e["qty"] * e["price"] for e in ep["entries"])
         ep["adds"] = max(0, len(ep["entries"]) - 1)
@@ -67,55 +69,72 @@ def load_episodes(days: int) -> list[dict]:
         elif reason == "reopen":
             ep["status"] = "中断"
         elif abs(ep["gross"]) < 1e-12 and ep["partial"] == 0 and (
-                reason.startswith("exchange") or "交易所" in str(ep.get("notes") or "")):
-            ep["status"] = "未知"        # 交易所平了但没取回成交明细
+                reason.startswith("exchange") or "交易所" in notes):
+            ep["status"] = "未知"
         else:
             ep["status"] = "已平"
         episodes.append(ep)
+
+    def pick(sym: str, mode: str | None = None) -> dict | None:
+        if mode:
+            ep = open_by_key.get((sym, mode))
+            if ep:
+                return ep
+        hint = last_mode.get(sym)
+        if hint and (sym, hint) in open_by_key:
+            return open_by_key[(sym, hint)]
+        cands = [ep for (s, _m), ep in open_by_key.items() if s == sym]
+        return max(cands, key=lambda e: e["open_ts"]) if cands else None
 
     for r in rows:
         kind = r.get("kind")
         sym = r.get("symbol") or "?"
         ts = int(r.get("ts") or 0)
+        mode = r.get("mode") or None
         if kind == "open":
-            if sym in open_by_sym:
-                finish(open_by_sym.pop(sym), ts, "reopen")
-            open_by_sym[sym] = {
-                "symbol": sym, "mode": r.get("mode") or "?",
-                "open_ts": ts, "entries": [], "partial": 0.0,
-                "partial_count": 0, "fee_included": False, "notes": "",
-            }
+            old = open_by_key.pop((sym, mode), None)
+            if old:
+                finish(old, ts, "reopen")
+            ep = {"symbol": sym, "mode": mode or "?",
+                  "open_ts": ts, "entries": [], "partial": 0.0,
+                  "partial_count": 0, "fee_included": False, "notes": ""}
             qty = float(r.get("qty") or 0)
             px = float(r.get("entry") or 0)
             if qty > 0 and px > 0:
-                open_by_sym[sym]["entries"].append({"qty": qty, "price": px})
-        elif kind in ("add", "close_partial", "close"):
-            ep = open_by_sym.get(sym)
+                ep["entries"].append({"qty": qty, "price": px})
+            open_by_key[(sym, mode or "?")] = ep
+            last_mode[sym] = mode or "?"
+        elif kind == "add":
+            ep = pick(sym, mode)
             if ep is None:
                 continue
-            if kind == "add":
-                qty = float(r.get("qty") or 0)
-                px = float(r.get("price") or 0)
-                if qty > 0 and px > 0:
-                    ep["entries"].append({"qty": qty, "price": px})
-            elif kind == "close_partial":
-                ep["partial"] += float(r.get("pnl") or 0)
-                ep["partial_count"] += 1
-            else:
-                open_by_sym.pop(sym, None)
-                notes = str(r.get("notes") or "")
-                ep["notes"] = notes
-                reason = str(r.get("reason") or "external")
-                total = r.get("pnl_total")
-                # 交易所整仓平仓的 pnl_total 来自 userTrades，已扣手续费
-                if reason.startswith("exchange") or "交易所" in notes:
-                    ep["fee_included"] = True
-                finish(ep, ts, reason,
-                       float(total) if total is not None else None)
+            qty = float(r.get("qty") or 0)
+            px = float(r.get("price") or 0)
+            if qty > 0 and px > 0:
+                ep["entries"].append({"qty": qty, "price": px})
+            last_mode[sym] = ep["mode"]
+        elif kind == "close_partial":
+            ep = pick(sym, mode)
+            if ep is None:
+                continue
+            ep["partial"] += float(r.get("pnl") or 0)
+            ep["partial_count"] += 1
+            last_mode[sym] = ep["mode"]
+        elif kind == "close":
+            ep = pick(sym, None)
+            if ep is None:
+                continue
+            open_by_key.pop((sym, ep["mode"]), None)
+            notes = str(r.get("notes") or "")
+            reason = str(r.get("reason") or "external")
+            total = r.get("pnl_total")
+            if reason.startswith("exchange") or "交易所" in notes:
+                ep["fee_included"] = True
+            finish(ep, ts, reason,
+                   float(total) if total is not None else None, notes)
 
-    for ep in open_by_sym.values():
+    for ep in open_by_key.values():
         finish(ep, None, "open", ep["partial"])
-    episodes.sort(key=lambda e: e["open_ts"])
     return episodes
 
 
