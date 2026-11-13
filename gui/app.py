@@ -65,6 +65,11 @@ class App:
         self.refresh()
 
     # ------------------------------------------------------------------ UI
+    def _bind_combo_wheel_guard(self) -> None:
+        """全局屏蔽 Combobox 滚轮，避免滚页面时误改策略/参数。"""
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.root.bind_class("TCombobox", seq, lambda _e: "break")
+
     def _build(self) -> None:
         self.root.title(f"币安跟单工具 v{VERSION} · 控制台")
         self.root.geometry("1180x800")
@@ -87,6 +92,7 @@ class App:
         self.btn_panic.pack(side="right", padx=(0, 8), pady=(4, 0))
         self.lbl_live = ttk.Label(head, text="● LIVE 实盘运行中", style="Danger.TLabel")
 
+        self._bind_combo_wheel_guard()
         self.nb = ttk.Notebook(self.root)
         self.nb.pack(fill="both", expand=True, padx=12, pady=(4, 12))
 
@@ -1189,7 +1195,7 @@ class App:
             w.destroy()
         self.sg_vars = {}
         self.sg_widgets = {}
-        spec = REG.get(getattr(self, "active_strategy", "fade")) or REG.all()[0]
+        spec = REG.get(getattr(self, "active_strategy", "")) or REG.all()[0]
         for title, fields in list(spec.fields) + list(self._SG_COMMON):
             box = ttk.LabelFrame(self.sg_fields_host, text=title, padding=10)
             box.pack(fill="x", pady=(10, 0))
@@ -1325,7 +1331,8 @@ class App:
             self.cb_sg_preset.set(labels[0])
 
     def load_strategy_preset(self) -> None:
-        name = self._preset_labels.get(self.cb_sg_preset.get(), "scalp")
+        name = (self._preset_labels.get(self.cb_sg_preset.get())
+                or next(iter(SC.PRESETS), ""))
         sid = str(self.sg_cfg.get("strategy") or "fade")
         spec = REG.get(sid)
         if not spec or name not in (spec.presets or ()):
@@ -1334,7 +1341,7 @@ class App:
             return
         self.sg_cfg = SC.apply_preset(self.sg_cfg, name)
         self._sg_fill(self.sg_cfg)
-        spec = REG.get(str(self.sg_cfg.get("strategy") or "fade"))
+        spec = REG.get(str(self.sg_cfg.get("strategy") or "")) or REG.all()[0]
         if spec:
             self.var_sg_title.set(f"{spec.name}  ·  {self.cb_sg_preset.get()}")
         self._append(f"已载入预设「{self.cb_sg_preset.get()}」，"
@@ -1368,11 +1375,11 @@ class App:
 
         preset_box = ttk.LabelFrame(parent, text="参数预设", padding=10)
         preset_box.pack(fill="x")
-        self._preset_labels = {"复刻带单员：暴涨做空 + 有限加仓": "fade",
-                               "宽止盈·15m 信号（TP4/SL6）": "fade_wide",
-                               "实盘：5U×6、单币、15m 信号、追踪止盈": "fade_live",
-                               "激进·100U（10U×6、日亏≤15U）": "aggr_100",
-                               "激进·500U（20U×6、日亏≤30U）": "aggr_500"}
+        labels = getattr(SC, "PRESET_LABELS", {}) or {}
+        self._preset_labels = {lbl: pid for pid, lbl in labels.items()
+                               if pid in SC.PRESETS}
+        if not self._preset_labels:
+            self._preset_labels = {pid: pid for pid in SC.PRESETS}
         self.cb_sg_preset = ttk.Combobox(preset_box, values=list(self._preset_labels),
                                          state="readonly", width=34)
         self._all_preset_labels = dict(self._preset_labels)

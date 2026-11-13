@@ -1,5 +1,21 @@
 # 更新日志
 
+## v2.0.0（2026-11-14）
+
+开源框架 + 私有策略分层。
+
+- 公开仓库只保留跟单框架与示例策略 `bot/strategies/example.py`
+- 私有策略、实盘预设、研究脚本、报表统一放入 `private/`（已 gitignore）
+- `strategy_registry` 动态扫描插件：
+  · 优先 `private/strategies/*.py`
+  · 回退 `bot/strategies/*.py`
+- 公开版无 `private/` 时自动加载示例策略，GUI/测试不崩溃
+- 全局屏蔽 Combobox 鼠标滚轮，避免误改策略/参数
+- 新增 MIT LICENSE（Copyright (c) 2026 ilovend）
+- README 增加署名、插件扩展说明与风险免责声明
+
+---
+
 ## v1.22.7（2026-11-14）
 
 - 修正启动日志首行：basket 模式下改为打印

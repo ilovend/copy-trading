@@ -9,6 +9,7 @@ GUI 的标题、说明、参数字段、预设下拉，运行器选哪条信号�
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 
 
@@ -24,6 +25,7 @@ class StrategySpec:
 
 
 REGISTRY: dict[str, StrategySpec] = {}
+PLUGINS: dict[str, object] = {}
 
 # 所有策略共用的参数分组
 COMMON_FIELDS = (
@@ -55,28 +57,6 @@ COMMON_FIELDS = (
                         ("止盈2 平仓比例", "trade.tp2_frac"),
                         ("追踪启动 %", "trade.trail_activate_pct"),
                         ("追踪回撤 pp（传统）", "trade.trail_gap_pct"))),
-)
-
-FADE_FIELDS = (
-    ("策略参数：复刻 · 暴涨做空 + 均价加仓", (
-        ("1h 涨幅阈值 %", "fade.entry_pct"),
-        ("15m 涨幅阈值 %", "fade.entry_15m_pct"),
-        ("回看分钟", "fade.lookback_min"),
-        ("做多放量倍数", "fade.long_vol_mult"),
-        ("每笔名义 (U)", "basket.notional"),
-        ("加仓步长 %", "basket.add_step_pct"),
-        ("最多加仓次数", "basket.max_adds"),
-        ("均价止盈 %", "basket.basket_tp_pct"),
-        ("追踪启动 %（0=关）", "basket.trail_activate_pct"),
-        ("追踪回撤 pp", "basket.trail_gap_pct"),
-        ("分批止盈 %（0=关）", "basket.trail_partial_pct"),
-        ("分批比例", "basket.trail_partial_frac"),
-        ("ATR 倍数（0=固定回撤）", "basket.trail_atr_mult"),
-        ("硬止损 %", "basket.hard_stop_pct"),
-        ("最长持仓 (秒)", "basket.max_hold_s"),
-        ("垂直拉升 1h %", "runaway.entry_1h_pct"),
-        ("垂直拉升 15m %", "runaway.entry_15m_pct"),
-        ("每日拉黑名额（0=不限）", "runaway.max_bans"))),
 )
 
 PINBAR_FIELDS = (
@@ -127,6 +107,49 @@ def ids() -> list[str]:
     return list(REGISTRY)
 
 
+def register_plugin(meta: dict, module) -> None:
+    spec = StrategySpec(
+        id=str(meta["id"]),
+        name=str(meta.get("name") or meta["id"]),
+        tab=str(meta.get("tab") or "自研策略"),
+        desc=str(meta.get("desc") or ""),
+        kind=str(meta.get("kind") or "plugin"),
+        fields=tuple(meta.get("fields") or ()),
+        presets=tuple(meta.get("presets") or ()),
+    )
+    register(spec)
+    PLUGINS[spec.id] = module
+
+
+def is_plugin(sid: str) -> bool:
+    return sid in PLUGINS
+
+
+def signal(sid: str, bars, cfg: dict):
+    mod = PLUGINS.get(sid)
+    fn = getattr(mod, "signal", None) if mod else None
+    return fn(bars, cfg) if callable(fn) else None
+
+
+def simulate(sid: str, bars, i: int, basket: dict, bar_s: int, side: str):
+    mod = PLUGINS.get(sid)
+    fn = getattr(mod, "simulate_basket", None) if mod else None
+    return fn(bars, i, basket, bar_s, side) if callable(fn) else None
+
+
+def load_plugins() -> None:
+    try:
+        from strategy_loader import discover
+    except Exception as e:  # noqa: BLE001
+        print(f"[plugin] loader 不可用: {e}", file=sys.stderr)
+        return
+    for meta, mod in discover():
+        try:
+            register_plugin(meta, mod)
+        except Exception as e:  # noqa: BLE001
+            print(f"[plugin] 注册失败 {meta.get('id')}: {e}", file=sys.stderr)
+
+
 def infer(cfg: dict) -> str:
     """老配置没有 strategy 字段时，从开关推断；只返回已启用的策略。"""
     sid = str(cfg.get("strategy") or "").strip()
@@ -136,15 +159,8 @@ def infer(cfg: dict) -> str:
         return "fade"
     if (cfg.get("setup") or {}).get("enabled") and "two_stage" in REGISTRY:
         return "two_stage"
-    return next(iter(REGISTRY), "fade")
+    return next(iter(REGISTRY), "example")
 
-
-register(StrategySpec(
-    id="fade", name="复刻带单员：暴涨做空", tab="自研策略",
-    desc=("1h 急涨 + 15m 仍在冲 → 做空；逆行加仓、回均价止盈，"
-          "交易所条件单兜底，止损后不追、垂直拉升当天拉黑。"),
-    kind="fade", fields=FADE_FIELDS,
-    presets=("fade", "fade_wide", "fade_live", "aggr_100", "aggr_500")))
 
 # 回放为负期望，暂不启用（定义保留，供以后研究）
 PINBAR_SPEC = StrategySpec(
@@ -160,3 +176,6 @@ TWO_STAGE_SPEC = StrategySpec(
           "过滤掉假突破。"),
     kind="two_stage", fields=TWO_STAGE_FIELDS, presets=())
 EXPERIMENTAL = EXPERIMENTAL + (TWO_STAGE_SPEC,)
+
+
+load_plugins()

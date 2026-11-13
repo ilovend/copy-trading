@@ -30,7 +30,6 @@ sys.path.insert(0, str(ROOT / "bot"))
 import websockets  # noqa: E402
 
 import strategy_volume_pinbar as SP  # noqa: E402
-import strategy_fade as SF  # noqa: E402
 import strategy_registry as REG  # noqa: E402
 from strategy_config import CONFIG_PATH, load as load_cfg  # noqa: E402
 from strategy_engine import (INTERVAL_S, StrategyEngine, ladder_of, log,  # noqa: E402
@@ -174,6 +173,15 @@ class Runner:
         if added:
             self.prefill(added)
 
+    def _plugin_cfg(self, sid: str) -> dict:
+        if sid == "fade":
+            return {**self.fade_cfg, "direction": self.cfg.get("direction", "short")}
+        cfg = dict(self.cfg)
+        sec = self.cfg.get(sid)
+        if isinstance(sec, dict):
+            cfg.update(sec)
+        return cfg
+
     # ------------------------------------------------------------- 信号线程
     def _signal_loop(self) -> None:
         while not self._stop.is_set():
@@ -192,10 +200,10 @@ class Runner:
                 if bar_s < sig_s and (bar["t"] + bar_s * 1000) % (sig_s * 1000) != 0:
                     continue
                 sig = None
-                if self.sid == "fade":
+                if REG.is_plugin(self.sid):
                     # 已有仓位时不重复开首仓（加仓由引擎按逆行触发）
                     if symbol not in self.engine.positions:
-                        sig = SF.fade_signal(bars, {**self.fade_cfg, "direction": self.cfg.get("direction", "short")})
+                        sig = REG.signal(self.sid, bars, self._plugin_cfg(self.sid))
                 elif self.sid == "two_stage":
                     stage = self.stages.get(symbol)
                     if stage is None:
@@ -584,17 +592,16 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
     basket = cfg.get("basket") or {}
     bar_s = INTERVAL_S.get(cfg.get("interval", "1m"), 60)
     hold_bars = max(1, int(round(float(trade.get("max_hold_s", 180) or 180) / bar_s)))
-    if sid == "fade":
+    if REG.is_plugin(sid):
         warm = max(65, int(fade.get("lookback_min", 60)) + 2)
     elif sid == "two_stage":
         warm = max(60, (int(setup.get("lookback", 12)) + 2) * int(setup.get("htf_minutes", 30)))
     else:
         warm = max(60, (int(sig.get("htf_lookback", 12)) + 2) * int(sig.get("htf_minutes", 15))
                    if sig.get("htf_enabled") else 60)
-    if sid == "fade":
-        mode_txt = (f"暴涨做空 1h≥{fade.get('entry_pct')}% / 15m≥{fade.get('entry_15m_pct')}% "
-                    f"+ 均价加仓 {basket.get('add_step_pct')}%×{basket.get('max_adds')} "
-                    f"止盈 {basket.get('basket_tp_pct')}% 硬止损 {basket.get('hard_stop_pct')}%")
+    if REG.is_plugin(sid):
+        spec = REG.get(sid)
+        mode_txt = (spec.desc if spec else sid)
     elif sid == "two_stage":
         mode_txt = (f"两段式 {setup.get('htf_minutes')}m→1m 放量{setup.get('trig_vol_mult')}x"
                     f"（预备 {setup.get('arm_bars')} 根有效）")
@@ -625,13 +632,20 @@ def replay(cfg: dict, bars_per_symbol: int) -> None:
                                    bar_s)
             if bar_s < sig_s and (bars[i]["t"] + bar_s * 1000) % (sig_s * 1000) != 0:
                 continue
-            if sid == "fade":
-                sig_f = SF.fade_signal(bars[:i + 1], fade)
+            if REG.is_plugin(sid):
+                pcfg = ({**fade, "direction": cfg.get("direction", "short")}
+                        if sid == "fade" else
+                        {**cfg, **(cfg.get(sid) if isinstance(cfg.get(sid), dict) else {})})
+                sig_f = REG.signal(sid, bars[:i + 1], pcfg)
                 if not sig_f:
                     continue
                 hits += 1
-                pnl, _how, _adds, held = SF.simulate_basket(
-                    bars, i, basket, bar_s, sig_f.get("side", "SHORT"))
+                sim = REG.simulate(sid, bars, i, basket, bar_s,
+                                   sig_f.get("side", "SHORT"))
+                if sim:
+                    pnl, _how, _adds, held = sim
+                else:
+                    pnl, _how, held = simulate_exit(bars, i, trade, bar_s)
                 block_until = i + max(1, held) + 1
             else:
                 if stage is not None:

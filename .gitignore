@@ -42,3 +42,6 @@ gui/*.json.bak*
 
 reports/
 
+
+# ---- private strategies / presets / local reports ----
+private/
