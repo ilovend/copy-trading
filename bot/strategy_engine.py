@@ -714,7 +714,13 @@ class StrategyEngine:
         max_adds = int(b.get("max_adds", 3) or 0)
         adds = len(pos["entries"]) - 1
         last = float(pos.get("last_add_pnl", 0.0))
-        if adds < max_adds and (last - pnl) >= step:
+        if adds < max_adds and (last - pnl) >= step - 1e-9:
+            allowed, why = FILTER.is_allowed(symbol)
+            if not allowed:
+                if not pos.get("_add_blocked_logged"):
+                    pos["_add_blocked_logged"] = True
+                    log(f"{symbol:12s} 已被过滤（{why}），停止加仓")
+                return
             if now - float(pos.get("last_add_try", 0) or 0) >= 30:
                 pos["last_add_try"] = now
                 self._basket_add(symbol, pos, mark, pnl)
