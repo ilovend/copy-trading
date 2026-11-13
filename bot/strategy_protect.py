@@ -40,6 +40,7 @@ class ProtectMixin:
                            working_type: str = "MARK_PRICE",
                            close_side: str = "BUY") -> int | None:
         """挂单个条件单，处理「旧单还没撤干净」(-4130) 与连接抖动。"""
+        self._protect_err = ""
         last_msg = ""
         for attempt in range(1, 5):
             try:
@@ -68,8 +69,18 @@ class ProtectMixin:
                 except Exception:  # noqa: BLE001
                     pass
                 time.sleep(0.3)
+        self._protect_err = last_msg
         log(f"⚠ {kind} 条件单失败 {symbol}: {last_msg}")
         return None
+
+    def _mark_of(self, symbol: str, fallback: float = 0.0) -> float:
+        try:
+            bid, ask = self._book(symbol)
+            if bid > 0 and ask > 0:
+                return (bid + ask) / 2
+        except Exception:  # noqa: BLE001
+            pass
+        return fallback
 
     def _place_protect(self, symbol: str, pos: dict) -> None:
         """开仓/加仓后，在交易所挂「全平」止盈止损条件单，进程挂了也有保护。"""
@@ -104,11 +115,22 @@ class ProtectMixin:
                                        close_side=close_side)
         if sl_id:
             ids.append(sl_id)
+        elif "-2021" in str(getattr(self, "_protect_err", "")):
+            mark = self._mark_of(symbol, avg)
+            log(f"⚠ {symbol} 止损价 {sl_px:g} 已被击穿（-2021），立即市价平仓")
+            self._notify(f"⚠ {symbol} 止损价已被击穿，立即市价平仓")
+            self._close_partial(symbol, "basket_stop", mark, 1.0)
+            return
         tp_id = self._place_one_protect(ex, symbol, "TAKE_PROFIT_MARKET", tp_px, ps,
                                        qty=pos["qty"], working_type=tp_work,
                                        close_side=close_side)
         if tp_id:
             ids.append(tp_id)
+        elif "-2021" in str(getattr(self, "_protect_err", "")):
+            mark = self._mark_of(symbol, avg)
+            log(f"⚠ {symbol} 止盈价 {tp_px:g} 已被击穿（-2021），立即市价止盈")
+            self._close_partial(symbol, "basket_tp", mark, 1.0)
+            return
         pos["protect"] = ids
         if ids:
             log(f"PROTECT {symbol:12s} 止损 {sl_px:g} / 止盈 {tp_px:g}（交易所条件单）")
