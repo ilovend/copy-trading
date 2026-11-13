@@ -204,7 +204,11 @@ class Runner:
     def _manage_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                self.engine.manage(dict(self.prices))
+                atr = {}
+                for sym, bars in self.bars.items():
+                    if len(bars) >= 15:
+                        atr[sym] = _atr_pct(bars)
+                self.engine.manage(dict(self.prices), atr)
                 if self.engine._past_cutoff():
                     if self.engine.positions:
                         log("到收盘时间，强平全部策略仓位")

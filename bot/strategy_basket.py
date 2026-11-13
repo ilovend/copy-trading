@@ -9,7 +9,8 @@ from logutil import log
 
 class BasketMixin:
 
-    def _manage_basket(self, symbol: str, pos: dict, mark: float, now: float) -> None:
+    def _manage_basket(self, symbol: str, pos: dict, mark: float, now: float,
+                       atr_pct: float = 0.0) -> None:
         """暴涨做空 + 逆行加仓 + 回均价止盈，带硬止损与时间止损。"""
         b = self.basket
         pnl = self._pnl_pct(pos.get("side", "SHORT"), pos["avg"], mark)
@@ -42,6 +43,11 @@ class BasketMixin:
         # 浮盈追踪：峰值上移，回撤到线就平（只上不下）
         trail_act = float(b.get("trail_activate_pct", 0) or 0)
         trail_gap = float(b.get("trail_gap_pct", 0) or 0)
+        atr_mult = float(b.get("trail_atr_mult", 0) or 0)
+        if atr_mult > 0 and atr_pct > 0:
+            trail_gap = max(float(b.get("trail_atr_min", 0.15) or 0.15),
+                            min(float(b.get("trail_atr_max", 0.6) or 0.6),
+                                atr_mult * atr_pct))
         if trail_act > 0 and trail_gap > 0:
             if pos["peak"] >= trail_act:
                 pos["trail_on"] = True

@@ -719,7 +719,7 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         self._finalize(symbol, pos, "take_profit_maker")
 
     # ------------------------------------------------------------- 持仓管理
-    def manage(self, prices: dict[str, float]) -> None:
+    def manage(self, prices: dict[str, float], atr_pct: dict[str, float] | None = None) -> None:
         if not self.positions or time.time() < self._api_hold:
             return
         self._reconcile()
@@ -748,7 +748,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             if mark <= 0:
                 continue
             if self.basket_on:
-                self._manage_basket(symbol, pos, mark, now)
+                self._manage_basket(symbol, pos, mark, now,
+                                    (atr_pct or {}).get(symbol, 0.0))
                 continue
             pnl = self._pnl_pct(pos.get("side", "SHORT"), pos["avg"], mark)
             pos["peak"] = max(pos["peak"], pnl)
