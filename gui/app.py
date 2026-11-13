@@ -81,6 +81,8 @@ class App:
                         command=self.toggle_theme).pack(side="right")
         ttk.Label(head, text=f"v{VERSION}", style="Dim.TLabel").pack(
             side="right", padx=(0, 16), pady=(4, 0))
+        self.btn_acct = ttk.Button(head, text="账户配置", command=self.open_account_dialog)
+        self.btn_acct.pack(side="right", padx=(0, 8), pady=(4, 0))
         self.btn_panic = ttk.Button(head, text="一键全停", command=self.panic_stop)
         self.btn_panic.pack(side="right", padx=(0, 8), pady=(4, 0))
         self.lbl_live = ttk.Label(head, text="● LIVE 实盘运行中", style="Danger.TLabel")
@@ -310,10 +312,13 @@ class App:
             "需要逐项调整就勾选下面的「显示高级设置」。"
         )).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        keys = ttk.LabelFrame(parent, text="执行账户（实盘必填，只存 .env）", padding=10)
+        keys = ttk.LabelFrame(parent, text="执行账户 API（全局共用）", padding=10)
         keys.pack(fill="x", pady=(0, 8))
-        self._cfg_entry(keys, 0, "API Key", "exec_api_key", cfg, "币安 API 管理创建", show="*")
-        self._cfg_entry(keys, 1, "API Secret", "exec_api_secret", cfg, "关闭提现权限", show="*")
+        ttk.Label(keys, style="Hint.TLabel", justify="left", wraplength=800, text=(
+            "API Key / Secret 已移到顶栏「账户配置」，复制与自研策略共用同一组，只写 .env。"
+        )).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Button(keys, text="打开账户配置",
+                   command=self.open_account_dialog).grid(row=1, column=0, sticky="w", pady=(8, 0))
 
         outer = parent
         self.var_adv = tk.BooleanVar(value=bool(cfg.get("show_advanced", False)))
@@ -453,6 +458,84 @@ class App:
             ttk.Label(parent, text=hint, style="Dim.TLabel").grid(row=row, column=2, sticky="w", padx=(10, 0))
         self.copy_vars[key] = var
 
+    def _save_account_keys(self, key: str, secret: str) -> str:
+        key = (key or "").strip()
+        secret = (secret or "").strip()
+        if not key or not secret:
+            return "API Key 和 Secret 都不能为空"
+        self._upsert_env({"EXEC_API_KEY": key, "EXEC_API_SECRET": secret})
+        self._refresh_env_labels()
+        return ""
+
+    def open_account_dialog(self) -> None:
+        from exec_client import ExecClient, load_keys
+        key0, secret0 = load_keys()
+        win = tk.Toplevel(self.root)
+        win.title("账户 API 配置（复制 + 自研策略共用）")
+        win.geometry("660x300")
+        win.transient(self.root)
+        body = ttk.Frame(win, padding=16)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, style="Hint.TLabel", justify="left", wraplength=620, text=(
+            "这一组 Key 同时用于「仓位复制」和「自研策略」，只写入 .env。\n"
+            "建议只开合约交易权限、关闭提现、绑定固定 IP。"
+        )).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        key_var = tk.StringVar(value=key0)
+        sec_var = tk.StringVar(value=secret0)
+        show_var = tk.BooleanVar(value=False)
+        ttk.Label(body, text="API Key", width=10, style="Muted.TLabel").grid(
+            row=1, column=0, sticky="w", pady=4)
+        key_entry = ttk.Entry(body, textvariable=key_var, width=52, show="*")
+        key_entry.grid(row=1, column=1, sticky="w")
+        ttk.Label(body, text="API Secret", width=10, style="Muted.TLabel").grid(
+            row=2, column=0, sticky="w", pady=4)
+        sec_entry = ttk.Entry(body, textvariable=sec_var, width=52, show="*")
+        sec_entry.grid(row=2, column=1, sticky="w")
+
+        def toggle_show() -> None:
+            m = "" if show_var.get() else "*"
+            key_entry.configure(show=m)
+            sec_entry.configure(show=m)
+
+        ttk.Checkbutton(body, text="显示明文", variable=show_var,
+                        command=toggle_show).grid(row=3, column=1, sticky="w", pady=(2, 8))
+        status = tk.StringVar(value="")
+        ttk.Label(body, textvariable=status, style="Hint.TLabel",
+                  wraplength=620).grid(row=4, column=0, columnspan=3, sticky="w")
+        btns = ttk.Frame(body)
+        btns.grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+
+        def save() -> None:
+            err = self._save_account_keys(key_var.get(), sec_var.get())
+            status.set(err or "已保存到 .env；重启复制/策略后使用新 Key")
+
+        def test() -> None:
+            k, s = key_var.get().strip(), sec_var.get().strip()
+            if not k or not s:
+                status.set("Key / Secret 不能为空")
+                return
+            status.set("正在测试连接…")
+
+            def work() -> None:
+                try:
+                    info = ExecClient(k, s).test()
+                    msg = (f"连接成功：权益 {info['equity']:.2f}U  可用 {info['available']:.2f}U  "
+                           f"持仓 {info['positions']} 个 · "
+                           f"{'双向' if info['hedge'] else '单向'}持仓")
+                except Exception as e:  # noqa: BLE001
+                    msg = f"连接失败：{str(e)[:160]}"
+                def apply() -> None:
+                    if win.winfo_exists():
+                        status.set(msg)
+
+                win.after(0, apply)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        ttk.Button(btns, text="保存", style="Accent.TButton", command=save).pack(side="left")
+        ttk.Button(btns, text="测试连接", command=test).pack(side="left", padx=8)
+        ttk.Button(btns, text="关闭", command=win.destroy).pack(side="left")
+
     def _upsert_env(self, pairs: dict) -> None:
         """把键值写进 .env：已有的更新，没有的追加，其它行原样保留。"""
         path = ROOT / ".env"
@@ -578,10 +661,6 @@ class App:
                 cfg["ratio_mode"] = "net_equity"
             cfg["mode"] = self._mode_labels.get(self.cb_exec_mode.get(), "shadow")
             cfg["show_advanced"] = False
-            self._upsert_env({
-                "EXEC_API_KEY": self.copy_vars["exec_api_key"].get().strip(),
-                "EXEC_API_SECRET": self.copy_vars["exec_api_secret"].get().strip(),
-            })
             cfg.pop("exec_api_key", None)
             cfg.pop("exec_api_secret", None)
             path = ROOT / "gui" / "copy_config.json"
@@ -776,12 +855,11 @@ class App:
             self.var_exec_warn.set("⚠ 实盘模式：会真实下单扣款，先用 5U 验证。")
 
     def test_exec(self) -> None:
-        key = self.copy_vars["exec_api_key"].get().strip()
-        secret = self.copy_vars["exec_api_secret"].get().strip()
+        from exec_client import load_keys
+        key, secret = load_keys()
         if not key or not secret:
-            messagebox.showwarning("提示", "先填 API Key 和 API Secret")
+            messagebox.showwarning("提示", "先在顶栏「账户配置」里填 API Key / Secret")
             return
-        self.save_copy_cfg()
         self._append("[复制] 正在测试执行账户连接…", "info")
 
         def work() -> None:
