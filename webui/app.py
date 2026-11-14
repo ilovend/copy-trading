@@ -231,25 +231,8 @@ def filter_snapshot() -> dict:
     try:
         import symbol_filter as SF
         data = SF._clean(SF.load())
-        today = __import__("datetime").date.today()
-        items = []
-        for sym, v in (data.get("blacklist") or {}).items():
-            until = str(v.get("until") or "")
-            days = None
-            if until:
-                try:
-                    days = (__import__("datetime").datetime.strptime(until, "%Y-%m-%d").date() - today).days
-                except Exception:
-                    days = None
-            reason = str(v.get("reason") or "手动")
-            items.append({
-                "symbol": sym, "reason": reason, "until": until,
-                "days": days,
-                "remaining": ("永久" if not until else
-                              (f"剩余 {max(days, 0)} 天" if days is not None else until)),
-                "auto": ("垂直拉升" in reason),
-            })
-        items.sort(key=lambda x: (not x["auto"], x["until"] or "9999", x["symbol"]))
+        items = [SF.describe(sym, v) for sym, v in (data.get("blacklist") or {}).items()]
+        items.sort(key=lambda x: (not x["auto"], x.get("until_ts") or 0, x["symbol"]))
         return {"ok": True, "items": items}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:160], "items": []}
