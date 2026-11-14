@@ -510,8 +510,8 @@ class App:
         from exec_client import ExecClient, load_keys
         key0, secret0 = load_keys()
         win = tk.Toplevel(self.root)
-        win.title("账户 API / 通知配置")
-        win.geometry("700x480")
+        win.title("账户 API 配置（复制 + 自研策略共用）")
+        win.geometry("660x300")
         win.transient(self.root)
         body = ttk.Frame(win, padding=16)
         body.pack(fill="both", expand=True)
@@ -542,28 +542,8 @@ class App:
         ttk.Label(body, textvariable=status, style="Hint.TLabel",
                   wraplength=620).grid(row=4, column=0, columnspan=3, sticky="w")
 
-        ttk.Separator(body, orient="horizontal").grid(
-            row=5, column=0, columnspan=3, sticky="ew", pady=(10, 8))
-        cur_wx = os.environ.get("WECHAT_WEBHOOK", "").strip()
-        wx_hint = ""
-        if cur_wx:
-            try:
-                wx_hint = cur_wx.split("key=")[-1][-4:]
-            except Exception:
-                wx_hint = ""
-        wx_status = tk.StringVar(value=(
-            f"企业微信：已配置（key …{wx_hint}），留空不改"
-            if cur_wx else "企业微信：未配置；粘贴群机器人 Webhook 后保存"))
-        ttk.Label(body, text="企业微信通知", width=10, style="Muted.TLabel").grid(
-            row=6, column=0, sticky="nw", pady=4)
-        wx_var = tk.StringVar(value="")
-        wx_entry = ttk.Entry(body, textvariable=wx_var, width=52, show="*")
-        wx_entry.grid(row=6, column=1, sticky="w", pady=4)
-        ttk.Label(body, textvariable=wx_status, style="Hint.TLabel",
-                  wraplength=620, justify="left").grid(
-            row=7, column=0, columnspan=3, sticky="w", pady=(2, 4))
         btns = ttk.Frame(body)
-        btns.grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        btns.grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
 
         def save() -> None:
             err = self._save_account_keys(key_var.get(), sec_var.get())
@@ -592,27 +572,8 @@ class App:
 
             threading.Thread(target=work, daemon=True).start()
 
-        ttk.Button(btns, text="保存 API", style="Accent.TButton", command=save).pack(side="left")
+        ttk.Button(btns, text="保存", style="Accent.TButton", command=save).pack(side="left")
         ttk.Button(btns, text="测试连接", command=test).pack(side="left", padx=8)
-
-        def save_wx() -> None:
-            url = wx_var.get().strip()
-            if not url:
-                wx_status.set(f"未填写，保持当前配置（{wx_hint or '未配置'}）")
-                return
-            err = self._save_wechat_webhook(url)
-            wx_status.set(err or "企业微信已保存到 .env；重启策略后生效")
-
-        def test_wx() -> None:
-            url = wx_var.get().strip()
-            if not url:
-                wx_status.set("请先粘贴 Webhook；留空不会修改现有配置")
-                return
-            err = self._test_wechat_webhook(url)
-            wx_status.set("测试消息已发送" if not err else err)
-
-        ttk.Button(btns, text="保存微信", command=save_wx).pack(side="left", padx=(12, 0))
-        ttk.Button(btns, text="测试微信", command=test_wx).pack(side="left", padx=8)
         ttk.Button(btns, text="关闭", command=win.destroy).pack(side="left")
 
     def _upsert_env(self, pairs: dict) -> None:
@@ -1022,6 +983,60 @@ class App:
             "Chat ID：Telegram 搜 @userinfobot → 发任意消息，它回复的数字\n"
             "建完机器人先给它发一句话，否则不能主动私聊你。"
         )).grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
+        wecom = ttk.LabelFrame(parent, text="企业微信（已接入）", padding=12)
+        wecom.pack(fill="x", pady=(12, 0))
+        cur_wx = os.environ.get("WECHAT_WEBHOOK", "").strip()
+        wx_hint = ""
+        if cur_wx:
+            try:
+                wx_hint = cur_wx.split("key=")[-1][-4:]
+            except Exception:  # noqa: BLE001
+                wx_hint = ""
+        wx_status = tk.StringVar(value=(
+            f"已配置（key …{wx_hint}），留空不改；保存后重启策略生效"
+            if cur_wx else "未配置；粘贴企业微信群机器人 Webhook"))
+        wx_var = tk.StringVar(value="")
+        wx_row = ttk.Frame(wecom)
+        wx_row.pack(fill="x")
+        ttk.Label(wx_row, text="Webhook", width=10, style="Muted.TLabel").pack(side="left")
+        wx_entry = ttk.Entry(wx_row, textvariable=wx_var, width=58, show="*")
+        wx_entry.pack(side="left", padx=(0, 8))
+        wx_show = tk.BooleanVar(value=False)
+
+        def toggle_wx() -> None:
+            wx_entry.configure(show="" if wx_show.get() else "*")
+
+        ttk.Checkbutton(wx_row, text="显示", variable=wx_show,
+                        command=toggle_wx).pack(side="left")
+        ttk.Label(wecom, textvariable=wx_status, style="Hint.TLabel",
+                  wraplength=720, justify="left").pack(anchor="w", pady=(6, 0))
+        wx_btns = ttk.Frame(wecom)
+        wx_btns.pack(anchor="w", pady=(8, 0))
+
+        def save_wx() -> None:
+            url = wx_var.get().strip()
+            if not url:
+                wx_status.set(f"未填写，保持当前配置（{wx_hint or '未配置'}）")
+                return
+            err = self._save_wechat_webhook(url)
+            if err:
+                wx_status.set(err)
+            else:
+                wx_status.set("已保存到 .env；重启策略后生效")
+                wx_var.set("")
+
+        def test_wx() -> None:
+            url = wx_var.get().strip()
+            if not url:
+                wx_status.set("请先粘贴 Webhook；留空不会修改现有配置")
+                return
+            err = self._test_wechat_webhook(url)
+            wx_status.set("测试消息已发送" if not err else err)
+
+        ttk.Button(wx_btns, text="测试微信", command=test_wx).pack(side="left")
+        ttk.Button(wx_btns, text="保存微信", style="Accent.TButton",
+                   command=save_wx).pack(side="left", padx=8)
 
         other = ttk.LabelFrame(parent, text="其他渠道（预留）", padding=12)
         other.pack(fill="x", pady=(12, 0))
