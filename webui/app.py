@@ -132,6 +132,14 @@ def credential_status() -> dict:
     secret = os.environ.get("EXEC_API_SECRET", "").strip()
     cookie = os.environ.get("BINANCE_COOKIE", "").strip()
     csrf = os.environ.get("BINANCE_CSRFTOKEN", "").strip()
+    webhook = os.environ.get("WECHAT_WEBHOOK", "").strip()
+    wx_hint = ""
+    if webhook:
+        try:
+            from urllib.parse import parse_qs, urlparse
+            wx_hint = (parse_qs(urlparse(webhook).query).get("key") or [""])[0][-4:]
+        except Exception:
+            wx_hint = ""
     return {
         "ok": True,
         "api_key": ("*" * max(0, len(key) - 4) + key[-4:]) if key else "",
@@ -139,6 +147,8 @@ def credential_status() -> dict:
         "has_cookie": bool(cookie and csrf),
         "session_file": (ROOT / "session.json").exists(),
         "ua": bool(os.environ.get("BINANCE_UA", "").strip()),
+        "has_wechat": bool(webhook),
+        "wechat_hint": wx_hint,
     }
 
 
@@ -452,6 +462,49 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return self._json({"ok": True, "has_cookie": True, "session_file": True})
+
+        if self.path.startswith("/api/credentials/wechat"):
+            url = str(data.get("webhook") or "").strip()
+            from urllib.parse import parse_qs, urlparse
+            u = urlparse(url)
+            key = (parse_qs(u.query).get("key") or [""])[0]
+            if (u.scheme != "https" or u.hostname != "qyapi.weixin.qq.com"
+                    or u.path != "/cgi-bin/webhook/send" or not key):
+                return self._json({"ok": False, "error": "Webhook 格式不对，应为企业微信群机器人地址"}, 400)
+            # 先用临时 webhook 测试，失败不覆盖
+            try:
+                import notify as N
+                old = N.WECHAT_WEBHOOK
+                N.WECHAT_WEBHOOK = url
+                try:
+                    ok = N.wechat_send("✅ WebUI 企业微信通知测试")
+                finally:
+                    N.WECHAT_WEBHOOK = old
+            except Exception as e:  # noqa: BLE001
+                return self._json({"ok": False, "error": f"测试失败: {str(e)[:160]}"}, 400)
+            if not ok:
+                return self._json({"ok": False, "error": "企业微信测试失败，Webhook 未保存"}, 400)
+            cfg = read_json(CONFIG, {})
+            restart = bool(data.get("restart"))
+            if restart and str(cfg.get("mode")) == "live" and data.get("confirm") != "LIVE":
+                return self._json({"ok": False, "error": "实盘重启需要输入 LIVE 确认"}, 400)
+            upsert_env({"WECHAT_WEBHOOK": url})
+            try:
+                os.environ["WECHAT_WEBHOOK"] = url
+                import notify as N
+                N.WECHAT_WEBHOOK = url
+            except Exception:
+                pass
+            restarted = False
+            if restart:
+                try:
+                    subprocess.run([INIT, "restart"], capture_output=True, text=True, timeout=20)
+                    restarted = True
+                except Exception as e:  # noqa: BLE001
+                    return self._json({"ok": False, "error": f"已保存但重启失败: {e}"}, 500)
+            st = credential_status()
+            return self._json({"ok": True, "tested": True, "restarted": restarted,
+                               "wechat_hint": st.get("wechat_hint")})
 
         if self.path.startswith("/api/filter/block"):
             raw = data.get("symbols") or data.get("symbol") or ""

@@ -170,6 +170,20 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
         <button class="primary" id="btnSaveSession">保存登录态</button>
         <span class="note">写入 .env + session.json；监听进程若在跑需重启才用新会话。</span>
       </div>
+
+      <h3>企业微信策略通知</h3>
+      <label class="field" style="margin-bottom:8px">群机器人 Webhook
+        <input id="wechatInput" type="password" autocomplete="off" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
+      </label>
+      <div class="form">
+        <label class="field">保存后
+          <select id="wechatRestart"><option value="1">重启策略</option><option value="0">只保存</option></select>
+        </label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btnSaveWechat">保存并测试</button>
+        <span class="note">会先发一条测试消息；失败不覆盖旧 Webhook。</span>
+      </div>
     </div>
   </details>
 
@@ -387,9 +401,11 @@ async function refreshCreds() {
     const bits = [];
     bits.push(d.has_api_key ? `API Key ${d.api_key || '已配置'}` : 'API Key 未配置');
     bits.push(d.has_cookie ? '登录态已配置' : '登录态未配置');
+    bits.push(d.has_wechat ? `企业微信已配置${d.wechat_hint ? ' · key …' + d.wechat_hint : ''}` : '企业微信未配置');
     $('credStatus').textContent = bits.join(' · ');
     $('apiKeyInput').placeholder = d.has_api_key ? `当前 ${d.api_key}，留空不改` : '粘贴新的 API Key';
     $('csrfInput').placeholder = d.has_cookie ? '已配置，留空不改' : '粘贴 csrftoken';
+    $('wechatInput').placeholder = d.has_wechat ? `已配置${d.wechat_hint ? ' · key …' + d.wechat_hint : ''}，粘贴新地址可替换` : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...';
   } catch (e) { /* ignore */ }
 }
 async function saveKeys() {
@@ -410,6 +426,24 @@ async function saveKeys() {
     if (d.restarted) setTimeout(refresh, 1500);
   } catch (e) { toast('API Key 保存失败：' + e.message, 'err'); }
 }
+async function saveWechat() {
+  const url = $('wechatInput').value.trim();
+  if (!url) { toast('请粘贴企业微信群机器人 Webhook', 'err'); return; }
+  const restart = $('wechatRestart').value === '1';
+  let confirm = '';
+  if (restart && currentMode === 'live') {
+    confirm = prompt('实盘重启会短暂停止策略，输入 LIVE 确认') || '';
+    if (confirm !== 'LIVE') { toast('已取消', 'err'); return; }
+  }
+  try {
+    const d = await api('/api/credentials/wechat', {method:'POST', body:JSON.stringify({webhook:url, restart, confirm})});
+    toast(d.restarted ? '企业微信已保存并重启' : '企业微信已保存（需重启才生效）', 'ok');
+    $('wechatInput').value = '';
+    refreshCreds();
+    if (d.restarted) setTimeout(refresh, 1500);
+  } catch (e) { toast('企业微信保存失败：' + e.message, 'err'); }
+}
+
 async function saveSession() {
   const cookie = $('cookieInput').value.trim();
   const csrf = $('csrfInput').value.trim();
@@ -515,6 +549,7 @@ $('btnStop').onclick = () => control('stop');
 $('btnSave').onclick = save;
 $('btnSaveKeys').onclick = saveKeys;
 $('btnSaveSession').onclick = saveSession;
+$('btnSaveWechat').onclick = saveWechat;
 $('logLines').onchange = refreshLog;
 $('onlyEvents').onchange = refreshLog;
 refresh(); refreshLog(); refreshFilter(); refreshCreds();
