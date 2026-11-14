@@ -103,7 +103,7 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
 </head>
 <body>
 <header>
-  <h1>策略控制台</h1>
+  <h1 id="title">策略控制台</h1>
   <span id="modeBadge" class="badge shadow">--</span>
   <span id="svcBadge" class="badge">--</span>
   <button id="btnRefresh" style="padding:6px 10px;min-height:32px">刷新</button>
@@ -364,6 +364,9 @@ async function refresh() {
     const st = await api('/api/status');
     const s = st.status || {};
     const cfg = st.config || {};
+    const inst = st.instance || '';
+    document.title = (inst ? inst + ' · ' : '') + '策略控制台';
+    $('title').textContent = inst ? `策略控制台 · ${inst}` : '策略控制台';
     setMode(cfg.mode || s.mode || 'shadow', st.service);
     setMeta(st.meta);
     $('universe').textContent = s.universe ?? '--';

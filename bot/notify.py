@@ -40,6 +40,7 @@ TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")
 TG_PROXY = os.environ.get("TELEGRAM_PROXY", "").strip()
 WECHAT_WEBHOOK = os.environ.get("WECHAT_WEBHOOK", "").strip()
+INSTANCE_NAME = os.environ.get("INSTANCE_NAME", "").strip()
 
 
 def tg_send(text: str) -> bool:
@@ -117,6 +118,8 @@ def wechat_send_async(text: str) -> None:
 
 def notify_async(text: str) -> None:
     """策略统一通知：Telegram + 企业微信，未配置的通道直接跳过。"""
+    if INSTANCE_NAME:
+        text = f"[{INSTANCE_NAME}] {text}"
     if TG_TOKEN and TG_CHAT:
         tg_send_async(text)
     if WECHAT_WEBHOOK:

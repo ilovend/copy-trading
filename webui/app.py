@@ -223,14 +223,17 @@ def preset_info(cfg: dict) -> dict:
         return {"strategy_id": "", "strategy_name": "", "preset_id": "", "preset_label": ""}
 
 
-def rss_mb():
+def rss_mb(pid=None):
     try:
-        r = subprocess.run(["pgrep", "-f", "bot/strategy_run.py"],
-                           capture_output=True, text=True, timeout=2)
-        pids = [x.strip() for x in (r.stdout or "").splitlines() if x.strip()]
-        if not pids:
-            return None
-        text = Path(f"/proc/{pids[0]}/status").read_text(encoding="utf-8", errors="replace")
+        if pid:
+            text = Path(f"/proc/{int(pid)}/status").read_text(encoding="utf-8", errors="replace")
+        else:
+            r = subprocess.run(["pgrep", "-f", "bot/strategy_run.py"],
+                               capture_output=True, text=True, timeout=2)
+            pids = [x.strip() for x in (r.stdout or "").splitlines() if x.strip()]
+            if not pids:
+                return None
+            text = Path(f"/proc/{pids[0]}/status").read_text(encoding="utf-8", errors="replace")
         m = re.search(r"^VmRSS:\s+(\d+)\s+kB", text, re.M)
         return round(int(m.group(1)) / 1024, 1) if m else None
     except Exception:
@@ -305,7 +308,8 @@ def snapshot() -> dict:
         "positions": pos if isinstance(pos, dict) else {},
         "config": {k: get_path(cfg, k) for k in FIELDS},
         "meta": preset_info(cfg),
-        "rss_mb": rss_mb(),
+        "instance": os.environ.get("INSTANCE_NAME", "").strip(),
+        "rss_mb": rss_mb(st.get("pid")),
     }
 
 

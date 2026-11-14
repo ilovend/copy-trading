@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import queue
 import sys
 import threading
@@ -41,7 +42,7 @@ FAPI = "https://fapi.binance.com"
 # 币安 2026 起把合约行情 WS 迁到 /market/stream；老的 /ws、/stream 仍能握手但不推数据
 WS = "wss://fstream.binance.com/market/stream"
 BARS_KEEP = 1500       # 25 小时 1m，够聚合出 HTF 结构
-LOCK_PORT = 47613      # 单实例锁：端口被占说明已有策略在跑
+LOCK_PORT = int(os.environ.get("STRATEGY_LOCK_PORT", "47613"))  # 每实例独立
 _LOCK_SOCK = None
 
 
@@ -287,7 +288,8 @@ class Runner:
             if b:
                 latest = max(latest, int(b[-1]["t"]))
         payload = {
-            "ts": int(now), "time": datetime.now().strftime("%H:%M:%S"),
+            "ts": int(now), "pid": os.getpid(),
+            "time": datetime.now().strftime("%H:%M:%S"),
             "mode": self.engine.mode, "universe": len(self.universe),
             "bars": len(self.bars), "positions": len(self.engine.positions),
             "queue": self.signals.qsize(),

@@ -9,9 +9,10 @@
 """
 from __future__ import annotations
 
+import os
 import socket
 
-PORT = 47620
+PORT = int(os.environ.get("TRADE_LOCK_PORT", "47620"))
 _sock: socket.socket | None = None
 
 
