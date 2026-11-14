@@ -1027,7 +1027,6 @@ class App:
         other.pack(fill="x", pady=(12, 0))
         for i, (label, hint) in enumerate((
                 ("QQ 机器人", "go-cqhttp / OneBot"),
-                ("企业微信 / 微信群", "Webhook"),
                 ("钉钉", "Webhook"),
                 ("通用 Webhook", "HTTP POST JSON"))):
             var = tk.BooleanVar(value=False)
@@ -1037,8 +1036,7 @@ class App:
             ttk.Label(other, text=hint, style="Dim.TLabel").grid(row=i, column=2, sticky="w")
 
         ttk.Label(parent, style="Dim.TLabel", justify="left", wraplength=720, text=(
-            "以后加渠道时，接口已经按「推送适配器」设计：监听器只产生事件，"
-            "由这里决定发到哪些渠道，互不影响。"
+            "企业微信已接入，配置在顶栏「账户配置」；QQ / 钉钉 / 通用 Webhook 仍为预留。"
         )).pack(anchor="w", pady=(12, 0))
 
     # ------------------------------------------------------------ 自动跟单 tab
