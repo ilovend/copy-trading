@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import queue
 import threading
@@ -38,6 +39,7 @@ load_env()
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")
 TG_PROXY = os.environ.get("TELEGRAM_PROXY", "").strip()
+WECHAT_WEBHOOK = os.environ.get("WECHAT_WEBHOOK", "").strip()
 
 
 def tg_send(text: str) -> bool:
@@ -63,6 +65,64 @@ def tg_send(text: str) -> bool:
     return False
 
 
+def wechat_send(text: str) -> bool:
+    """企业微信群机器人；同步发送，失败重试一次。"""
+    if not WECHAT_WEBHOOK:
+        _log("wechat not configured")
+        return False
+    if not WECHAT_WEBHOOK.startswith("https://qyapi.weixin.qq.com/"):
+        _log("wechat webhook 非法")
+        return False
+    # 企业微信 text 上限 2048 字节，按 UTF-8 字节截断，避免中文超限
+    content = text.encode("utf-8")[:1800].decode("utf-8", "ignore")
+    payload = json.dumps({
+        "msgtype": "text",
+        "text": {"content": content},
+    }, ensure_ascii=False).encode("utf-8")
+    for attempt in (1, 2):
+        try:
+            req = urllib.request.Request(
+                WECHAT_WEBHOOK, data=payload,
+                headers={"Content-Type": "application/json", "User-Agent": "copy-trading/2"},
+                method="POST")
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read().decode("utf-8", "replace") or "{}")
+                if int(data.get("errcode", -1)) == 0:
+                    return True
+                _log(f"wechat error ({attempt}/2): {data}")
+        except Exception as e:  # noqa: BLE001
+            _log(f"wechat error ({attempt}/2): {e}")
+            time.sleep(1)
+    return False
+
+
+_wx_q: "queue.Queue[str]" = queue.Queue(maxsize=200)
+
+
+def _wx_worker() -> None:
+    while True:
+        text = _wx_q.get()
+        try:
+            wechat_send(text)
+        except Exception as e:  # noqa: BLE001
+            _log(f"wechat worker error: {e}")
+
+
+def wechat_send_async(text: str) -> None:
+    try:
+        _wx_q.put_nowait(text)
+    except queue.Full:
+        _log("wechat 队列已满，丢弃一条推送")
+
+
+def notify_async(text: str) -> None:
+    """策略统一通知：Telegram + 企业微信，未配置的通道直接跳过。"""
+    if TG_TOKEN and TG_CHAT:
+        tg_send_async(text)
+    if WECHAT_WEBHOOK:
+        wechat_send_async(text)
+
+
 _tg_q: "queue.Queue[str]" = queue.Queue(maxsize=200)
 
 
@@ -84,3 +144,4 @@ def tg_send_async(text: str) -> None:
 
 
 threading.Thread(target=_tg_worker, daemon=True).start()
+threading.Thread(target=_wx_worker, daemon=True).start()

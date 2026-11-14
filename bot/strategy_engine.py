@@ -296,8 +296,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
         if not self._notify_on:
             return
         try:
-            from notify import tg_send_async
-            tg_send_async(text)
+            from notify import notify_async
+            notify_async(text)
         except Exception:  # noqa: BLE001
             pass
 
