@@ -100,6 +100,48 @@ def write_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
+def upsert_env(pairs: dict) -> None:
+    path = ROOT / ".env"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    out, seen = [], set()
+    for line in lines:
+        st = line.strip()
+        if st and not st.startswith("#") and "=" in st:
+            k = st.split("=", 1)[0].strip()
+            if k in pairs:
+                out.append(f"{k}={pairs[k]}")
+                seen.add(k)
+                continue
+        out.append(line)
+    for k, v in pairs.items():
+        if k not in seen:
+            out.append(f"{k}={v}")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    try:
+        path.chmod(0o600)
+    except Exception:
+        pass
+    for k, v in pairs.items():
+        os.environ[k] = v
+
+
+def credential_status() -> dict:
+    key = os.environ.get("EXEC_API_KEY", "").strip()
+    secret = os.environ.get("EXEC_API_SECRET", "").strip()
+    cookie = os.environ.get("BINANCE_COOKIE", "").strip()
+    csrf = os.environ.get("BINANCE_CSRFTOKEN", "").strip()
+    return {
+        "ok": True,
+        "api_key": ("*" * max(0, len(key) - 4) + key[-4:]) if key else "",
+        "has_api_key": bool(key and secret),
+        "has_cookie": bool(cookie and csrf),
+        "session_file": (ROOT / "session.json").exists(),
+        "ua": bool(os.environ.get("BINANCE_UA", "").strip()),
+    }
+
+
 def get_path(data: dict, key: str):
     cur = data
     for part in key.split("."):
@@ -344,6 +386,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "lines": tail_log(n, events)})
         if self.path.startswith("/api/account"):
             return self._json({"ok": True, **account()})
+        if self.path.startswith("/api/credentials"):
+            return self._json(credential_status())
         if self.path.startswith("/api/filter"):
             return self._json(filter_snapshot())
         if self.path.startswith("/api/config"):
@@ -376,6 +420,55 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(1.2)
             return self._json({"ok": r.returncode == 0, "output": (r.stdout or r.stderr or "")[-300:],
                                "service": service_status()})
+
+        if self.path.startswith("/api/credentials/apikey"):
+            key = str(data.get("key") or "").strip()
+            secret = str(data.get("secret") or "").strip()
+            if len(key) < 10 or len(secret) < 10:
+                return self._json({"ok": False, "error": "API Key / Secret 不能为空且长度不足"}, 400)
+            cfg = read_json(CONFIG, {})
+            restart = bool(data.get("restart"))
+            if restart and str(cfg.get("mode")) == "live" and data.get("confirm") != "LIVE":
+                return self._json({"ok": False, "error": "实盘重启需要输入 LIVE 确认"}, 400)
+            test = {}
+            try:
+                from exec_client import ExecClient
+                test = ExecClient(key, secret).test()
+            except Exception as e:  # noqa: BLE001
+                return self._json({"ok": False, "error": f"新 Key 测试失败：{str(e)[:160]}"}, 400)
+            upsert_env({"EXEC_API_KEY": key, "EXEC_API_SECRET": secret})
+            restarted = False
+            if restart:
+                try:
+                    subprocess.run([INIT, "restart"], capture_output=True, text=True, timeout=20)
+                    restarted = True
+                except Exception as e:  # noqa: BLE001
+                    return self._json({"ok": False, "error": f"已保存但重启失败: {e}"}, 500)
+            return self._json({"ok": True, "restarted": restarted, "test": test,
+                               "api_key": credential_status()["api_key"]})
+
+        if self.path.startswith("/api/credentials/session"):
+            cookie = str(data.get("cookie") or "").strip()
+            csrf = str(data.get("csrf") or "").strip()
+            ua = str(data.get("ua") or "").strip()
+            if not cookie or not csrf:
+                return self._json({"ok": False, "error": "cookie 和 csrftoken 不能为空"}, 400)
+            upsert_env({"BINANCE_COOKIE": cookie, "BINANCE_CSRFTOKEN": csrf})
+            if ua:
+                upsert_env({"BINANCE_UA": ua})
+            sess_path = ROOT / "session.json"
+            sess = read_json(sess_path, {})
+            if not isinstance(sess, dict):
+                sess = {}
+            sess.update({"cookie": cookie, "csrftoken": csrf})
+            if ua:
+                sess["user-agent"] = ua
+            write_json(sess_path, sess)
+            try:
+                sess_path.chmod(0o600)
+            except Exception:
+                pass
+            return self._json({"ok": True, "has_cookie": True, "session_file": True})
 
         if self.path.startswith("/api/filter/block"):
             raw = data.get("symbols") or data.get("symbol") or ""

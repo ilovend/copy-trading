@@ -234,7 +234,7 @@ class Runner:
         while not self._stop.is_set():
             try:
                 atr = {}
-                for sym, bars in self.bars.items():
+                for sym, bars in list(self.bars.items()):
                     if len(bars) >= 15:
                         atr[sym] = _atr_pct(bars)
                 self.engine.manage(dict(self.prices), atr)
@@ -283,7 +283,7 @@ class Runner:
 
     def _write_status(self, now: float) -> None:
         latest = 0
-        for b in self.bars.values():
+        for b in list(self.bars.values()):
             if b:
                 latest = max(latest, int(b[-1]["t"]))
         payload = {

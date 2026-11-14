@@ -38,8 +38,11 @@ button:active{transform:scale(.98)}
 button:disabled{opacity:.32;cursor:not-allowed}
 button.primary{background:var(--accent);color:#06131a;border-color:var(--accent);font-weight:600}
 button.stop{background:var(--live);color:#fff;border-color:var(--live);font-weight:700}
-select,input{font:inherit;background:#12151a;color:var(--fg);border:1px solid var(--line);
+select,input,textarea{font:inherit;background:#12151a;color:var(--fg);border:1px solid var(--line);
   border-radius:8px;padding:8px 9px;min-height:38px;width:100%}
+textarea{min-height:76px;resize:vertical;font-family:Consolas,ui-monospace,monospace;font-size:12px}
+.cfg-body h3{font-size:12px;color:var(--muted);margin:14px 0 8px}
+.cfg-body h3:first-child{margin-top:0}
 label.field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted);min-width:0}
 .form{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}
 .note{font-size:12px;color:var(--dim);line-height:1.5}
@@ -137,6 +140,38 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
       <tbody id="posBody"><tr><td colspan="5" class="note">暂无持仓</td></tr></tbody>
     </table></div>
   </section>
+
+  <details class="card" id="credCard">
+    <summary>
+      <span class="sum-title">账户配置</span>
+      <span class="sum-sub" id="credStatus">加载中…</span>
+    </summary>
+    <div class="cfg-body">
+      <h3>API Key（合约交易权限，禁提现）</h3>
+      <div class="form">
+        <label class="field">新的 API Key<input id="apiKeyInput" autocomplete="off" placeholder="留空不改"></label>
+        <label class="field">新的 API Secret<input id="apiSecretInput" type="password" autocomplete="off" placeholder="留空不改"></label>
+        <label class="field">保存后
+          <select id="credRestart"><option value="1">重启策略</option><option value="0">只保存</option></select>
+        </label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btnSaveKeys">保存 API Key</button>
+        <span class="note">新 Key 会先测试连接；失败不会覆盖旧 Key。</span>
+      </div>
+
+      <h3>Binance 登录态（监听/跟单用）</h3>
+      <div class="form">
+        <label class="field" style="grid-column:1/-1">BINANCE_COOKIE<textarea id="cookieInput" placeholder="粘贴浏览器 Cookie，留空不改"></textarea></label>
+        <label class="field">BINANCE_CSRFTOKEN<input id="csrfInput" autocomplete="off" placeholder="留空不改"></label>
+        <label class="field">User-Agent（可选）<input id="uaInput" autocomplete="off" placeholder="留空沿用旧值"></label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btnSaveSession">保存登录态</button>
+        <span class="note">写入 .env + session.json；监听进程若在跑需重启才用新会话。</span>
+      </div>
+    </div>
+  </details>
 
   <section class="card">
     <h2>控制</h2>
@@ -346,6 +381,49 @@ async function refresh() {
     $('acctNote').textContent = a.ok ? `${a.hedge ? '双向' : '单向'}持仓` : (a.error || '');
   } catch (e) { /* ignore */ }
 }
+async function refreshCreds() {
+  try {
+    const d = await api('/api/credentials');
+    const bits = [];
+    bits.push(d.has_api_key ? `API Key ${d.api_key || '已配置'}` : 'API Key 未配置');
+    bits.push(d.has_cookie ? '登录态已配置' : '登录态未配置');
+    $('credStatus').textContent = bits.join(' · ');
+    $('apiKeyInput').placeholder = d.has_api_key ? `当前 ${d.api_key}，留空不改` : '粘贴新的 API Key';
+    $('csrfInput').placeholder = d.has_cookie ? '已配置，留空不改' : '粘贴 csrftoken';
+  } catch (e) { /* ignore */ }
+}
+async function saveKeys() {
+  const key = $('apiKeyInput').value.trim();
+  const secret = $('apiSecretInput').value.trim();
+  if (!key || !secret) { toast('API Key 和 Secret 都要填', 'err'); return; }
+  const restart = $('credRestart').value === '1';
+  let confirm = '';
+  if (restart && currentMode === 'live') {
+    confirm = prompt('实盘重启会短暂停止策略，输入 LIVE 确认') || '';
+    if (confirm !== 'LIVE') { toast('已取消', 'err'); return; }
+  }
+  try {
+    const d = await api('/api/credentials/apikey', {method:'POST', body:JSON.stringify({key, secret, restart, confirm})});
+    toast(d.restarted ? 'Key 已保存并重启' : 'Key 已保存（需重启才生效）', 'ok');
+    $('apiKeyInput').value = ''; $('apiSecretInput').value = '';
+    refreshCreds();
+    if (d.restarted) setTimeout(refresh, 1500);
+  } catch (e) { toast('API Key 保存失败：' + e.message, 'err'); }
+}
+async function saveSession() {
+  const cookie = $('cookieInput').value.trim();
+  const csrf = $('csrfInput').value.trim();
+  if (!cookie || !csrf) { toast('Cookie 和 csrftoken 都要填', 'err'); return; }
+  try {
+    await api('/api/credentials/session', {method:'POST', body:JSON.stringify({
+      cookie, csrf, ua: $('uaInput').value.trim()
+    })});
+    toast('登录态已保存', 'ok');
+    $('cookieInput').value = ''; $('csrfInput').value = ''; $('uaInput').value = '';
+    refreshCreds();
+  } catch (e) { toast('登录态保存失败：' + e.message, 'err'); }
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -433,12 +511,15 @@ $('btnStart').onclick = () => control('start');
 $('btnRestart').onclick = () => control('restart');
 $('btnStop').onclick = () => control('stop');
 $('btnSave').onclick = save;
+$('btnSaveKeys').onclick = saveKeys;
+$('btnSaveSession').onclick = saveSession;
 $('logLines').onchange = refreshLog;
 $('onlyEvents').onchange = refreshLog;
-refresh(); refreshLog(); refreshFilter();
+refresh(); refreshLog(); refreshFilter(); refreshCreds();
 setInterval(refresh, 3000);
 setInterval(refreshLog, 2500);
 setInterval(refreshFilter, 15000);
+setInterval(refreshCreds, 30000);
 </script>
 </body>
 </html>

@@ -1,5 +1,19 @@
 # 更新日志
 
+## v2.0.3（2026-11-14）
+
+Web UI 账户配置 + 并发修复。
+
+- 新增「账户配置」折叠卡片：
+  · 更新 API Key / Secret，保存前先测试连接，失败不覆盖旧 Key
+  · 可选保存后重启策略（实盘需输入 LIVE）
+  · 更新 BINANCE_COOKIE / CSRFTOKEN / UA，同时写 .env 与 session.json
+- 修复持仓线程 `dictionary changed size during iteration`：
+  · `_manage_loop` 与 `_write_status` 遍历 bars 前做快照
+- 黑名单模块保持 symbol_filter.json 单一来源
+
+---
+
 ## v2.0.2（2026-11-14）
 
 Web UI 合约黑名单。
