@@ -204,7 +204,17 @@ class Runner:
                 if REG.is_plugin(self.sid):
                     # 已有仓位时不重复开首仓（加仓由引擎按逆行触发）
                     if symbol not in self.engine.positions:
+                        mod = REG.PLUGINS.get(self.sid)
+                        if mod is not None:
+                            try:
+                                mod.LAST_REJECT = ""
+                            except Exception:  # noqa: BLE001
+                                pass
                         sig = REG.signal(self.sid, bars, self._plugin_cfg(self.sid))
+                        why = str(getattr(mod, "LAST_REJECT", "") or "") if sig is None else ""
+                        if why == "trend_guard":
+                            log(f"SKIP   {symbol:12s} trend_guard 连续4根15m高点抬高且收盘≥60%，跳过")
+                            self.engine._reject(symbol, "trend_guard", "4HH + 收盘≥60%")
                 elif self.sid == "two_stage":
                     stage = self.stages.get(symbol)
                     if stage is None:
