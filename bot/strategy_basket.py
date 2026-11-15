@@ -48,13 +48,25 @@ class BasketMixin:
             trail_gap = max(float(b.get("trail_atr_min", 0.15) or 0.15),
                             min(float(b.get("trail_atr_max", 0.6) or 0.6),
                                 atr_mult * atr_pct))
+        # 覆盖双边手续费即启动追踪：触发线不低于保本线，避免刚启动就亏手续费
+        fee_mode = str(b.get("trail_activate_fee", False)).strip().lower() in (
+            "1", "true", "yes", "on")
+        fee_rate = float(b.get("fee_rate_pct", 0.05) or 0.05)
+        fee_floor = max(0.0, fee_rate * 2) if fee_mode else 0.0
+        if fee_mode:
+            trail_act = fee_floor
         if trail_act > 0 and trail_gap > 0:
-            if pos["peak"] >= trail_act:
+            if pos["peak"] >= trail_act - 1e-9:
                 pos["trail_on"] = True
-                pos["trail_level"] = max(pos["trail_level"], pos["peak"] - trail_gap)
-            if pos["trail_on"] and pnl <= pos["trail_level"]:
-                self._close_partial(symbol, "basket_trail", mark, 1.0)
-                return
+                pos["trail_level"] = max(pos["trail_level"], pos["peak"] - trail_gap,
+                                         fee_floor)
+            if pos["trail_on"]:
+                pos["trail_level"] = max(pos["trail_level"], pos["peak"] - trail_gap,
+                                         fee_floor)
+                # 用严格小于：刚好到保本线时不立刻平，跌穿才走
+                if pnl < pos["trail_level"]:
+                    self._close_partial(symbol, "basket_trail", mark, 1.0)
+                    return
         if now - pos["opened_at"] >= hold:
             self._close_partial(symbol, "basket_timeout", mark, 1.0)
             return

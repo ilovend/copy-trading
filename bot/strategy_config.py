@@ -97,6 +97,8 @@ DEFAULTS: dict = {
         "max_adds": 3,                # 最多加几次（总笔数 1+max_adds）
         "basket_tp_pct": 0.5,         # 均价盈利多少全平
         "trail_activate_pct": 0.0,    # 浮盈到多少启动追踪（0=关闭）
+        "trail_activate_fee": False,  # True=覆盖双边手续费即启动追踪
+        "fee_rate_pct": 0.05,         # 单边手续费 %（taker 默认 0.05）
         "trail_gap_pct": 0.5,         # 峰值回撤多少 pp 平仓
         "trail_partial_pct": 0.0,     # 到多少先平一部分（0=不分批）
         "trail_partial_frac": 0.5,    # 分批平掉的比例
