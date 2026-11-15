@@ -234,7 +234,8 @@ def _sanitize(cfg: dict) -> dict:
         u["sort_by"] = "change"
     t = cfg.get("trade") or {}
     for key in ("entry_mode", "tp_mode"):
-        if t.get(key) not in ("maker", "taker"):
+        allowed = ("maker", "taker", "auto") if key == "entry_mode" else ("maker", "taker")
+        if t.get(key) not in allowed:
             _warn(f"trade.{key}={t.get(key)!r} 不支持，已用 taker")
             t[key] = "taker"
     cutoff = str(t.get("cutoff", "")).strip().lower()

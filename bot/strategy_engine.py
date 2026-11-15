@@ -474,6 +474,27 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             f"距今 {age:.0f}s 均价 {pos['avg']:g}")
         return self._enter(symbol, {**detail, "side": side}, signal_price, add=True)
 
+    def _entry_plan(self, side: str, detail: dict, bid: float,
+                    ask: float) -> tuple[bool, bool, float, str]:
+        """返回 (是否maker, 是否允许超时转taker, maker等待秒, 展示文本)。"""
+        mode = str(self.trade.get("entry_mode", "taker") or "taker").lower()
+        if mode == "maker":
+            return True, False, float(self.trade.get("entry_timeout_s", 5) or 5), "maker"
+        if mode != "auto":
+            return False, False, 0.0, "taker"
+        c1h = float(detail.get("chg_1h") or 0)
+        c15 = float(detail.get("chg_15m") or 0)
+        strong_1h = float(self.trade.get("auto_taker_1h_pct", 12) or 12)
+        strong_15 = float(self.trade.get("auto_taker_15m_pct", 5) or 5)
+        weak_1h = float(self.trade.get("auto_weak_1h_pct", 9) or 9)
+        weak_15 = float(self.trade.get("auto_weak_15m_pct", 3.5) or 3.5)
+        timeout = float(self.trade.get("auto_maker_timeout_s", 2) or 2)
+        if c1h >= strong_1h or c15 >= strong_15:
+            return False, False, 0.0, "auto:taker"
+        weak = c1h < weak_1h and c15 < weak_15
+        fallback = (not weak) and bool(self.trade.get("auto_fallback_taker", True))
+        return True, fallback, timeout, "auto:maker" + ("+转taker" if fallback else "")
+
     def _enter(self, symbol: str, detail: dict, signal_price: float, add: bool) -> bool:
         side = str(detail.get("side") or "SHORT").upper()
         dir_txt = "多" if side == "LONG" else "空"
@@ -510,16 +531,16 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             return False
 
         px = self._ioc_price(symbol, self._entry_side(side), bid, ask, signal_price)
-        maker_entry = (self.mode == "live" and ask > 0
-                       and str(self.trade.get("entry_mode", "taker")) == "maker")
+        plan_maker, auto_fallback, maker_timeout, entry_txt = self._entry_plan(
+            side, detail, bid, ask)
+        maker_entry = bool(self.mode == "live" and ask > 0 and plan_maker)
         if maker_entry:
             # 做空挂在卖一价、做多挂在买一价（挂在会立即成交的一侧就等于吃单）
             base_px = ask if side == "SHORT" else bid
             px = max(self._tick_round(base_px, flt["tick"]), flt["tick"])
         self._cooldown[symbol] = time.time()
         log(f"{'ADD ' if add else 'OPEN'}?  {symbol:12s} {side:5s} qty={qty:g} px={px:g} "
-            f"名义={qty * signal_price:.2f}U 模式={self.mode}"
-            f"{' 被动挂单' if maker_entry else ''}")
+            f"名义={qty * signal_price:.2f}U 模式={self.mode} 进场={entry_txt}")
 
         entry = px if bid > 0 else signal_price
         if self.mode == "live":
@@ -528,14 +549,35 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                 if maker_entry:
                     resp = self._send(symbol, self._entry_side(side), qty, px, self._pside(side), tif="GTC")
                     oid = resp.get("orderId")
-                    timeout = float(self.trade.get("entry_timeout_s", 5) or 5)
-                    filled, fill_px = self._await_fill(symbol, oid, timeout, px, qty)
-                    if filled <= 0:
+                    filled, fill_px = self._await_fill(symbol, oid, maker_timeout, px, qty)
+                    if filled <= 0 and auto_fallback:
+                        # maker 未成交：按当前盘口转 taker，先重新检查滑点
+                        bid2, ask2 = self._book(symbol)
+                        if bid2 > 0:
+                            slip2 = (signal_price - bid2) / signal_price * 100
+                            max_slip2 = float(self.trade.get("max_slippage_pct", 0.5) or 0.5)
+                            if max_slip2 > 0 and slip2 > max_slip2:
+                                self._reject(symbol, "fallback_slippage",
+                                             f"转taker时滑点 {slip2:.2f}% > {max_slip2:g}%")
+                                return False
+                        px2 = self._ioc_price(symbol, self._entry_side(side), bid2, ask2, signal_price)
+                        log(f"FALLBK {symbol:12s} maker {maker_timeout:g}s 未成交 → taker px={px2:g}")
+                        resp = self._send(symbol, self._entry_side(side), qty, px2, self._pside(side))
+                        filled = float(resp.get("executedQty") or 0)
+                        if filled > 0:
+                            entry = float(resp.get("avgPrice") or 0) or px2
+                            qty = filled
+                        else:
+                            self._reject(symbol, "fallback_unfilled",
+                                         f"maker 未成交，转taker也未成交 status={resp.get('status')}")
+                            return False
+                    elif filled <= 0:
                         self._reject(symbol, "maker_unfilled",
-                                     f"被动挂单 {timeout:g}s 未成交，已撤单")
+                                     f"被动挂单 {maker_timeout:g}s 未成交，已撤单")
                         return False
-                    entry = fill_px or px
-                    qty = filled
+                    else:
+                        entry = fill_px or px
+                        qty = filled
                 else:
                     resp = self._send(symbol, self._entry_side(side), qty, px, self._pside(side))
                     filled = float(resp.get("executedQty") or 0)
