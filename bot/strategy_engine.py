@@ -297,6 +297,10 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             return
         try:
             from notify import notify_async
+            if self.mode == "live_dry":
+                text = "[干跑] " + text
+            elif self.mode == "shadow":
+                text = "[影子] " + text
             notify_async(text)
         except Exception:  # noqa: BLE001
             pass
