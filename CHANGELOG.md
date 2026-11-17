@@ -1,5 +1,12 @@
 # 更新日志
 
+## v2.0.26（2026-11-18）
+
+- 多头过滤器拒绝原因写入日志（long_history / long_base_range / long_volume / long_momentum / long_breakout）
+- 便于判断为什么多头没有开仓
+
+---
+
 ## v2.0.25（2026-11-18）
 
 - 候选池过滤非 ASCII 合约代码（如 龙虾USDT），避免 WebSocket/REST 编码报错

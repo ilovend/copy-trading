@@ -260,10 +260,20 @@ class Runner:
                                 pass
                         sig = REG.signal(self.sid, bars, self._plugin_cfg(self.sid))
                         why = str(getattr(mod, "LAST_REJECT", "") or "") if sig is None else ""
-                        if why in ("trend_guard", "volume", "first_pierce", "bb_history"):
-                            label = {"trend_guard": "趋势过滤", "volume": "量能不足",
-                                     "first_pierce": "非首次布林带上穿",
-                                     "bb_history": "布林带历史不足"}.get(why, why)
+                        if why in ("trend_guard", "volume", "first_pierce", "bb_history",
+                                   "long_history", "long_base_range", "long_volume",
+                                   "long_momentum", "long_breakout"):
+                            label = {
+                                "trend_guard": "空头阶梯上涨过滤",
+                                "volume": "空头量能不足",
+                                "first_pierce": "非首次布林带上穿",
+                                "bb_history": "布林带历史不足",
+                                "long_history": "多头历史不足",
+                                "long_base_range": "多头横盘振幅过大",
+                                "long_volume": "多头量能不足",
+                                "long_momentum": "多头突破涨幅不足",
+                                "long_breakout": "多头未突破横盘上沿",
+                            }.get(why, why)
                             log(f"SKIP   {symbol:12s} {why} {label}，跳过")
                             self.engine._reject(symbol, why, label)
                 elif self.sid == "two_stage":
