@@ -106,7 +106,8 @@ DEFAULTS: dict = {
         "trail_atr_min": 0.15,        # ATR 回撤下限 pp
         "trail_atr_max": 0.6,         # ATR 回撤上限 pp
         "hard_stop_pct": 6.0,         # 均价逆行多少强平（保命）
-        "max_hold_s": 3600,           # 时间止损
+        "max_hold_s": 3600,           # 时间止损（0=关闭）
+        "dry_max_hold_s": 3600,       # 仅 live_dry 的超时保护
     },
     # 两段式：长周期出信号进「预备」，短周期急剧放量才触发（与上面的单根形态二选一）
     "setup": {

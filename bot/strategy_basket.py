@@ -25,6 +25,9 @@ class BasketMixin:
         tp = float(b.get("basket_tp_pct", 0.5) or 0)
         hard = float(b.get("hard_stop_pct", 6.0) or 0)
         hold = float(b.get("max_hold_s", 3600) or 0)
+        # 实盘人工止损；干跑额外加超时，避免模拟仓位永久占位
+        if self.mode == "live_dry" and hold <= 0:
+            hold = float(b.get("dry_max_hold_s", 3600) or 3600)
         if tp > 0 and pnl >= tp:
             self._close_partial(symbol, "basket_tp", mark, 1.0)
             return
