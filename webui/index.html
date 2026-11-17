@@ -134,6 +134,15 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
   </section>
 
   <section class="card">
+    <h2>账户全部持仓 <span id="allPosCount" class="badge">--</span></h2>
+    <div style="overflow:auto"><table>
+      <thead><tr><th>币</th><th>方向</th><th>数量</th><th>均价</th><th>标记</th><th>浮盈亏</th><th>杠杆</th><th>操作</th></tr></thead>
+      <tbody id="allPosBody"><tr><td colspan="8" class="note">加载中…</td></tr></tbody>
+    </table></div>
+    <p class="note" id="allPosNote">包含手动仓位和策略仓位；市价平仓会同时撤销该币挂单。</p>
+  </section>
+
+  <section class="card">
     <h2>策略持仓</h2>
     <div style="overflow:auto"><table>
       <thead><tr><th>币</th><th>方向</th><th>数量</th><th>均价</th><th>加仓</th></tr></thead>
@@ -359,6 +368,41 @@ function readValues() {
   if (n !== '') { out['trade.notional'] = n; out['basket.notional'] = n; }
   return out;
 }
+async function refreshAllPositions() {
+  try {
+    const d = await api('/api/positions');
+    const rows = d.items || [];
+    $('allPosCount').textContent = d.ok ? rows.length : '--';
+    $('allPosNote').textContent = d.ok
+      ? (d.hedge ? '双向持仓' : '单向持仓') + ' · 包含手动与策略仓位；市价平仓会撤该币挂单'
+      : (d.error || '读取持仓失败');
+    const body = $('allPosBody');
+    if (!d.ok) {
+      body.innerHTML = `<tr><td colspan="8" class="note">${esc(d.error || '读取失败')}</td></tr>`;
+      return;
+    }
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="8" class="note">暂无持仓</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(p => {
+      const side = p.side === 'LONG' ? '多' : '空';
+      const pnl = Number(p.unrealized || 0);
+      const tag = p.strategy ? ' <span class="badge">策略</span>' : '';
+      return `<tr>
+        <td>${esc(p.symbol)}${tag}</td><td>${side}</td><td>${fmt(p.qty, 4)}</td>
+        <td>${fmt(p.entry, 6)}</td><td>${fmt(p.mark, 6)}</td>
+        <td style="color:${pnl >= 0 ? '#5dd39e' : '#ff8b84'}">${pnl >= 0 ? '+' : ''}${fmt(pnl, 3)}U</td>
+        <td>${p.leverage ?? '-'}x</td>
+        <td><button class="close-pos" data-symbol="${esc(p.symbol)}" data-ps="${esc(p.position_side || '')}">平仓</button></td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    $('allPosCount').textContent = '--';
+    $('allPosNote').textContent = '读取持仓失败：' + e.message;
+  }
+}
+
 async function refresh() {
   try {
     const st = await api('/api/status');
@@ -397,6 +441,7 @@ async function refresh() {
     $('exPos').textContent = a.ok ? (a.positions ?? 0) : '--';
     $('acctNote').textContent = a.ok ? `${a.hedge ? '双向' : '单向'}持仓` : (a.error || '');
   } catch (e) { /* ignore */ }
+  await refreshAllPositions();
 }
 async function refreshCreds() {
   try {
@@ -553,6 +598,24 @@ $('btnSave').onclick = save;
 $('btnSaveKeys').onclick = saveKeys;
 $('btnSaveSession').onclick = saveSession;
 $('btnSaveWechat').onclick = saveWechat;
+$('allPosBody').addEventListener('click', async e => {
+  const b = e.target.closest('button.close-pos');
+  if (!b) return;
+  const sym = b.dataset.symbol || '';
+  const ps = b.dataset.ps || '';
+  const code = prompt(`市价平仓 ${sym} ${ps}\n\n输入 LIVE 确认`);
+  if (code !== 'LIVE') { toast('已取消', 'err'); return; }
+  b.disabled = true;
+  try {
+    const r = await api('/api/positions/close', {method:'POST', body:JSON.stringify({symbol:sym, position_side:ps, confirm:'LIVE'})});
+    toast(`平仓已提交 ${sym} ${r.side} ${fmt(r.qty,4)}`, 'ok');
+    await refreshAllPositions();
+  } catch (err) {
+    b.disabled = false;
+    toast('平仓失败：' + err.message, 'err');
+  }
+});
+
 $('logLines').onchange = refreshLog;
 $('onlyEvents').onchange = refreshLog;
 refresh(); refreshLog(); refreshFilter(); refreshCreds();

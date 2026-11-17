@@ -297,6 +297,39 @@ def account() -> dict:
     return data
 
 
+def positions_all() -> dict:
+    """交易所账户全部持仓，不只策略持仓。"""
+    try:
+        from exec_client import ExecClient
+        ex = ExecClient()
+        hedge = ex.position_mode()
+        strat = read_json(POSITIONS, {})
+        items = []
+        for r in ex.positions():
+            amt = float(r.get("positionAmt") or 0)
+            if abs(amt) <= 0:
+                continue
+            sym = str(r.get("symbol") or "")
+            ps = str(r.get("positionSide") or "BOTH").upper()
+            side = "LONG" if amt > 0 else "SHORT"
+            sp = strat.get(sym) if isinstance(strat, dict) else None
+            items.append({
+                "symbol": sym, "side": side, "position_side": ps,
+                "qty": abs(amt), "entry": float(r.get("entryPrice") or 0),
+                "mark": float(r.get("markPrice") or 0),
+                "unrealized": float(r.get("unRealizedProfit") or 0),
+                "leverage": r.get("leverage"),
+                "notional": abs(float(r.get("notional") or 0)),
+                "liq": float(r.get("liquidationPrice") or 0),
+                "strategy": bool(sp),
+                "strategy_side": (sp or {}).get("side") if sp else "",
+            })
+        items.sort(key=lambda x: (x["symbol"], x["position_side"]))
+        return {"ok": True, "hedge": hedge, "items": items}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:200], "items": [], "hedge": False}
+
+
 def snapshot() -> dict:
     st = read_json(STATUS, {})
     pos = read_json(POSITIONS, {})
@@ -381,6 +414,8 @@ class Handler(BaseHTTPRequestHandler):
                 n = 160
             events = (q.get("filter") or [""])[0] == "events"
             return self._json({"ok": True, "lines": tail_log(n, events)})
+        if self.path.startswith("/api/positions"):
+            return self._json(positions_all())
         if self.path.startswith("/api/account"):
             return self._json({"ok": True, **account()})
         if self.path.startswith("/api/credentials"):
@@ -401,6 +436,51 @@ class Handler(BaseHTTPRequestHandler):
             data = self._body()
         except Exception:  # noqa: BLE001
             return self._json({"ok": False, "error": "invalid json"}, 400)
+
+        if self.path.startswith("/api/positions/close"):
+            if str(data.get("confirm") or "") != "LIVE":
+                return self._json({"ok": False, "error": "平仓需要输入 LIVE 确认"}, 400)
+            sym = str(data.get("symbol") or "").upper()
+            want_ps = str(data.get("position_side") or "").upper()
+            if not sym:
+                return self._json({"ok": False, "error": "缺少 symbol"}, 400)
+            try:
+                from exec_client import ExecClient
+                ex = ExecClient()
+                hedge = ex.position_mode()
+                target = None
+                for r in ex.positions():
+                    if str(r.get("symbol") or "").upper() != sym:
+                        continue
+                    ps = str(r.get("positionSide") or "BOTH").upper()
+                    if want_ps and ps not in (want_ps, "BOTH"):
+                        continue
+                    if abs(float(r.get("positionAmt") or 0)) > 0:
+                        target = r
+                        break
+                if target is None:
+                    return self._json({"ok": False, "error": "没有找到该持仓"}, 404)
+                amt = float(target.get("positionAmt") or 0)
+                ps = str(target.get("positionSide") or "BOTH").upper()
+                close_side = "SELL" if amt > 0 else "BUY"
+                qty = abs(amt)
+                resp = ex.order(sym, close_side, qty, order_type="MARKET",
+                                reduce_only=True,
+                                position_side=ps if hedge and ps in ("LONG", "SHORT") else None)
+                cancelled = 0
+                try:
+                    ex.cancel_all(sym)
+                    cancelled += 1
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    ex.cancel_all_algo(sym)
+                except Exception:  # noqa: BLE001
+                    pass
+                return self._json({"ok": True, "symbol": sym, "side": close_side,
+                                   "qty": qty, "order": resp, "cancelled": cancelled})
+            except Exception as e:  # noqa: BLE001
+                return self._json({"ok": False, "error": str(e)[:220]}, 500)
 
         if self.path.startswith("/api/control"):
             action = str(data.get("action") or "")
