@@ -21,7 +21,7 @@ import queue
 import sys
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime
 from pathlib import Path
 
@@ -183,6 +183,11 @@ class Runner:
         self._stop = threading.Event()
         self._reconnect = threading.Event()
         self._last_summary = 0.0
+        self._filter_counts = Counter()
+        self._filter_flush = time.time()
+        self._last_universe_log = 0.0
+        self._last_ws_log = 0.0
+        self._last_rest_log = 0.0
         self._last_beat = time.time()
         self._last_msg = time.time()
         self._cutoff_logged = False
@@ -216,7 +221,9 @@ class Runner:
         new = scan_universe(self.cfg)
         added = [s for s in new if s not in self.bars]
         if set(new) != set(self.universe):
-            log(f"候选池更新（{len(new)}）：{', '.join(new)}")
+            if time.time() - self._last_universe_log >= 600:
+                self._last_universe_log = time.time()
+                log(f"候选池更新（{len(new)}）")
             self.universe = new
             self._reconnect.set()
         if added:
@@ -274,8 +281,8 @@ class Runner:
                                 "long_momentum": "多头突破涨幅不足",
                                 "long_breakout": "多头未突破横盘上沿",
                             }.get(why, why)
-                            log(f"SKIP   {symbol:12s} {why} {label}，跳过")
-                            self.engine._reject(symbol, why, label)
+                            self._filter_counts[why] += 1
+                            self.engine._reject(symbol, why, label, quiet=True)
                 elif self.sid == "two_stage":
                     stage = self.stages.get(symbol)
                     if stage is None:
@@ -349,6 +356,18 @@ class Runner:
                     self._last_summary = now
                     if self.engine.stats["signals"] or self.engine.positions:
                         log(f"统计   {self.engine.summary()}")
+                if now - self._filter_flush >= 900 and self._filter_counts:
+                    label = {
+                        "trend_guard": "空头阶梯上涨", "volume": "空头量能不足",
+                        "first_pierce": "非首次上穿", "bb_history": "布林带历史不足",
+                        "long_history": "多头历史不足", "long_base_range": "多头横盘过大",
+                        "long_volume": "多头量能不足", "long_momentum": "多头涨幅不足",
+                        "long_breakout": "多头未突破",
+                    }
+                    parts = [f"{label.get(k, k)} {v}" for k, v in self._filter_counts.most_common()]
+                    log("过滤   15m: " + " · ".join(parts))
+                    self._filter_counts.clear()
+                    self._filter_flush = now
             except Exception as e:  # noqa: BLE001
                 log(f"持仓管理异常: {e}")
             time.sleep(1.0)
@@ -494,8 +513,10 @@ class Runner:
                 async with websockets.connect(url, ping_interval=20, ping_timeout=20,
                                               max_queue=4096) as ws:
                     backoff = 1
-                    log(f"WS 已连接：{len(self.universe)} 个候选 · {self.interval} · "
-                        f"模式={self.engine.mode}")
+                    if time.time() - self._last_ws_log >= 60:
+                        self._last_ws_log = time.time()
+                        log(f"WS 已连接：{len(self.universe)} 个候选 · {self.interval} · "
+                            f"模式={self.engine.mode}")
                     while not self._stop.is_set() and not self._reconnect.is_set():
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=2)
@@ -606,7 +627,9 @@ class Runner:
         self._rest_enabled = feed in ("rest", "auto")
         if feed in ("rest", "auto"):
             rest_task = asyncio.create_task(self._rest_loop())
-            log(f"REST 兜底已开启：每 {self.cfg.get('rest_poll_s', 5)}s 轮询 "
+            if time.time() - self._last_rest_log >= 300:
+                self._last_rest_log = time.time()
+                log(f"REST 兜底：每 {self.cfg.get('rest_poll_s', 5)}s 轮询 "
                 f"{len(self.universe)} 个候选")
         try:
             if feed == "rest":

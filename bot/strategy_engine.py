@@ -316,10 +316,12 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             self._notify("⛔ API Key / IP 权限失效\n暂停下单 60 秒\n"
                          "请检查币安 API 的 IP 白名单")
 
-    def _reject(self, symbol: str, reason: str, detail: str, **extra) -> None:
+    def _reject(self, symbol: str, reason: str, detail: str, quiet: bool = False,
+                **extra) -> None:
         self.stats["rejects"] += 1
         self._record("reject", symbol=symbol, reason=reason, detail=detail, **extra)
-        log(f"SKIP   {symbol:12s} {reason:14s} {detail}")
+        if not quiet:
+            log(f"SKIP   {symbol:12s} {reason:14s} {detail}")
 
     def cooldown_ok(self, symbol: str) -> bool:
         bars = int((self.cfg.get("signal") or {}).get("cooldown_bars", 0))
