@@ -486,8 +486,9 @@ class StrategyEngine(BasketMixin, ProtectMixin):
             return True, False, float(self.trade.get("entry_timeout_s", 5) or 5), "maker"
         if mode != "auto":
             return False, False, 0.0, "taker"
-        c1h = float(detail.get("chg_1h") or 0)
-        c15 = float(detail.get("chg_15m") or 0)
+        # 多头的涨幅是负数，强弱必须按绝对值判断
+        c1h = abs(float(detail.get("chg_1h") or 0))
+        c15 = abs(float(detail.get("chg_15m") or 0))
         strong_1h = float(self.trade.get("auto_taker_1h_pct", 12) or 12)
         strong_15 = float(self.trade.get("auto_taker_15m_pct", 5) or 5)
         weak_1h = float(self.trade.get("auto_weak_1h_pct", 9) or 9)
