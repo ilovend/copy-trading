@@ -96,13 +96,19 @@ def _symbol_meta() -> dict:
 
 
 def scan_universe(cfg: dict) -> list[str]:
-    """候选池：24h 涨幅/成交额排序；可按 underlyingType 过滤加密/股票/商品。"""
+    """双候选池：空头按涨幅榜，多头按低振幅+成交额，合并去重。"""
     from net import http_json
     u = cfg.get("universe") or {}
-    top_n = int(u.get("top_n", 15) or 15)
+    short_n = int(u.get("top_n", 15) or 15)
+    long_n = int(u.get("long_top_n", 30) or 30)
+    long_on = bool(u.get("long_enabled", True))
     min_chg = float(u.get("min_change_pct", 3.0) or 0)
     min_qv = float(u.get("min_quote_volume", 50e6) or 0)
     sort_by = str(u.get("sort_by") or "change").lower()
+    long_min = float(u.get("long_min_change_pct", -15) or -15)
+    long_max = float(u.get("long_max_change_pct", 8) or 8)
+    long_amp = float(u.get("long_max_amplitude_pct", 20) or 20)
+    long_sort = str(u.get("long_sort_by") or "amplitude").lower()
     asset_types = {str(x).upper() for x in (u.get("asset_types") or ["COIN"])}
     allow_all = not asset_types or "*" in asset_types
     meta = _symbol_meta()
@@ -118,26 +124,38 @@ def scan_universe(cfg: dict) -> list[str]:
             chg = float(r.get("priceChangePercent") or 0)
             qv = float(r.get("quoteVolume") or 0)
             last = float(r.get("lastPrice") or 0)
+            hi = float(r.get("highPrice") or 0)
+            lo = float(r.get("lowPrice") or 0)
         except (TypeError, ValueError):
             continue
-        if last <= 0 or qv < min_qv or chg < min_chg:
+        if last <= 0 or qv < min_qv:
             continue
         if not allow_all and meta:
             m = meta.get(sym) or {}
             ut = str(m.get("underlyingType") or "").upper()
             ct = str(m.get("contractType") or "").upper()
-            # 标准加密永续通常 underlyingType=COIN；TradFi 为 EQUITY/COMMODITY
             if not ut and ct == "PERPETUAL":
                 ut = "COIN"
             if ut not in asset_types:
                 continue
-        cand.append((chg, qv, sym))
+        amp = ((hi - lo) / lo * 100) if lo > 0 else 999.0
+        cand.append({"sym": sym, "chg": chg, "qv": qv, "amp": amp})
+    short = [c for c in cand if c["chg"] >= min_chg]
     if sort_by == "volume":
-        cand.sort(key=lambda x: x[1], reverse=True)
+        short.sort(key=lambda c: c["qv"], reverse=True)
     else:
-        cand.sort(key=lambda x: x[0], reverse=True)
-    return [sym for _, _, sym in cand[:top_n]]
-
+        short.sort(key=lambda c: c["chg"], reverse=True)
+    pool = [c["sym"] for c in short[:short_n]]
+    if long_on:
+        longs = [c for c in cand
+                 if long_min <= c["chg"] <= long_max and c["amp"] <= long_amp]
+        if long_sort == "volume":
+            longs.sort(key=lambda c: c["qv"], reverse=True)
+        else:
+            longs.sort(key=lambda c: (c["amp"], -c["qv"]))
+        pool += [c["sym"] for c in longs[:long_n]]
+    # 去重保序
+    return list(dict.fromkeys(pool))
 
 def fetch_bars(symbol: str, interval: str, limit: int = BARS_KEEP) -> list[dict]:
     from net import http_json
