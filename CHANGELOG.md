@@ -1,5 +1,14 @@
 # 更新日志
 
+## v2.0.22（2026-11-18）
+
+- 候选池按 Binance exchangeInfo `underlyingType` 过滤
+- 默认 `universe.asset_types=["COIN"]`，排除 EQUITY/COMMODITY 等股票、商品代币
+- 当前候选由 40 个降为约 25 个纯加密币
+- 需要包含股票/商品时改为 ["COIN","EQUITY","COMMODITY"] 或 ["*"]
+
+---
+
 ## v2.0.21（2026-11-18）
 
 - 多头改为严格「低位横盘后放量突破」结构，不再接下跌趋势

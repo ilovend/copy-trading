@@ -77,14 +77,35 @@ def acquire_single_instance() -> None:
     _LOCK_SOCK = s
 
 
+_META_CACHE: dict = {"ts": 0.0, "data": {}}
+
+
+def _symbol_meta() -> dict:
+    """symbol -> exchangeInfo 元数据，缓存 1 小时。"""
+    import time as _time
+    from net import http_json
+    if _time.time() - float(_META_CACHE.get("ts") or 0) < 3600:
+        return _META_CACHE.get("data") or {}
+    try:
+        info = http_json(f"{FAPI}/fapi/v1/exchangeInfo", timeout=30)
+        data = {s.get("symbol"): s for s in (info.get("symbols") or [])}
+        _META_CACHE.update(ts=_time.time(), data=data)
+        return data
+    except Exception:  # noqa: BLE001
+        return _META_CACHE.get("data") or {}
+
+
 def scan_universe(cfg: dict) -> list[str]:
-    """候选池：默认按 24h 涨幅排序取前 N；剥头皮预设可按成交额排序。"""
+    """候选池：24h 涨幅/成交额排序；可按 underlyingType 过滤加密/股票/商品。"""
     from net import http_json
     u = cfg.get("universe") or {}
     top_n = int(u.get("top_n", 15) or 15)
     min_chg = float(u.get("min_change_pct", 3.0) or 0)
     min_qv = float(u.get("min_quote_volume", 50e6) or 0)
     sort_by = str(u.get("sort_by") or "change").lower()
+    asset_types = {str(x).upper() for x in (u.get("asset_types") or ["COIN"])}
+    allow_all = not asset_types or "*" in asset_types
+    meta = _symbol_meta()
     rows = http_json(f"{FAPI}/fapi/v1/ticker/24hr", timeout=20)
     if not isinstance(rows, list):
         raise RuntimeError(f"ticker 返回非列表: {type(rows).__name__} {str(rows)[:120]}")
@@ -101,6 +122,15 @@ def scan_universe(cfg: dict) -> list[str]:
             continue
         if last <= 0 or qv < min_qv or chg < min_chg:
             continue
+        if not allow_all and meta:
+            m = meta.get(sym) or {}
+            ut = str(m.get("underlyingType") or "").upper()
+            ct = str(m.get("contractType") or "").upper()
+            # 标准加密永续通常 underlyingType=COIN；TradFi 为 EQUITY/COMMODITY
+            if not ut and ct == "PERPETUAL":
+                ut = "COIN"
+            if ut not in asset_types:
+                continue
         cand.append((chg, qv, sym))
     if sort_by == "volume":
         cand.sort(key=lambda x: x[1], reverse=True)
