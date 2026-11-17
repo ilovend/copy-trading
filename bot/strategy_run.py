@@ -573,8 +573,17 @@ class Runner:
             trade = self.engine.trade
             pool = len(self.universe)
             if self.sid == "fade":
-                sig_txt = (f"暴涨做空 1h≥{self.fade_cfg.get('entry_pct')}% / "
-                           f"15m≥{self.fade_cfg.get('entry_15m_pct')}%")
+                e1 = self.fade_cfg.get("entry_pct")
+                e15 = self.fade_cfg.get("entry_15m_pct")
+                direction = str(self.cfg.get("direction", "short") or "short").lower()
+                short_txt = f"空 1h≥{e1}% / 15m≥{e15}%"
+                long_txt = "多 低位横盘+4倍量突破"
+                if direction == "both":
+                    sig_txt = short_txt + " | " + long_txt
+                elif direction == "long":
+                    sig_txt = long_txt
+                else:
+                    sig_txt = short_txt
             elif self.sid == "two_stage":
                 sig_txt = f"两段式 {self.setup_cfg.get('htf_minutes')}m→1m 放量"
             else:
@@ -584,7 +593,8 @@ class Runner:
                     f"信号 {sig_txt}\n"
                     f"单笔 {trade.get('notional')}U · 最多加仓 {self.cfg.get('basket', {}).get('max_adds', 0)} 次 · "
                     f"同时 {trade.get('max_positions')} 个币\n"
-                    f"日亏上限 {trade.get('max_daily_loss')}U · 收盘 {trade.get('cutoff')} 强平")
+                    f"日亏上限 {trade.get('max_daily_loss')}U · 收盘 "
+                    f"{trade.get('cutoff') or 'off'} 强平")
         except Exception:  # noqa: BLE001
             pass
 

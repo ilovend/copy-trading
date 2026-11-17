@@ -1,5 +1,15 @@
 # 更新日志
 
+## v2.0.27（2026-11-18）
+
+- 启动通知按实际方向显示：
+  · short：空头阈值
+  · both：空头 + 多头结构
+  · long：只显示多头
+- 收盘强平时间用实际配置，不再硬写 23:55
+
+---
+
 ## v2.0.26（2026-11-18）
 
 - 多头过滤器拒绝原因写入日志（long_history / long_base_range / long_volume / long_momentum / long_breakout）
