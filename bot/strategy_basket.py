@@ -22,13 +22,13 @@ class BasketMixin:
                 self._place_protect(symbol, pos)
                 if symbol not in self.positions:
                     return
-        tp = float(b.get("basket_tp_pct", 0.5) or 0.5)
-        hard = float(b.get("hard_stop_pct", 6.0) or 6.0)
-        hold = float(b.get("max_hold_s", 3600) or 3600)
-        if pnl >= tp:
+        tp = float(b.get("basket_tp_pct", 0.5) or 0)
+        hard = float(b.get("hard_stop_pct", 6.0) or 0)
+        hold = float(b.get("max_hold_s", 3600) or 0)
+        if tp > 0 and pnl >= tp:
             self._close_partial(symbol, "basket_tp", mark, 1.0)
             return
-        if pnl <= -hard:
+        if hard > 0 and pnl <= -hard:
             self._close_partial(symbol, "basket_stop", mark, 1.0)
             return
         # 浮盈到分批线：先平一部分，剩余继续追踪
@@ -67,7 +67,7 @@ class BasketMixin:
                 if pnl < pos["trail_level"]:
                     self._close_partial(symbol, "basket_trail", mark, 1.0)
                     return
-        if now - pos["opened_at"] >= hold:
+        if hold > 0 and now - pos["opened_at"] >= hold:
             self._close_partial(symbol, "basket_timeout", mark, 1.0)
             return
         step = float(b.get("add_step_pct", 1.26) or 1.26)
