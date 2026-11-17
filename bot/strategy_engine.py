@@ -1147,7 +1147,8 @@ class StrategyEngine(BasketMixin, ProtectMixin):
                      mode=pos["mode"])
         log(f"CLOSE  {symbol:12s} {reason:10s} 合计 pnl={total:+.3f}U "
             f"({held:.0f}s, {pos['parts']} 笔) 今日 {self.realized_today:+.2f}U")
-        self._notify(f"{'✅' if total >= 0 else '❌'} 策略平空 {symbol}（{reason}）\n"
+        dir_txt = "多" if str(pos.get("side") or "SHORT").upper() == "LONG" else "空"
+        self._notify(f"{'✅' if total >= 0 else '❌'} 策略平{dir_txt} {symbol}（{reason}）\n"
                      f"合计 {total:+.3f}U（{held:.0f}s，{pos['parts']} 笔）")
         self._check_halt()
 
