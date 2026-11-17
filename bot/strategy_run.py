@@ -118,7 +118,7 @@ def scan_universe(cfg: dict) -> list[str]:
     cand = []
     for r in rows:
         sym = str(r.get("symbol") or "")
-        if not sym.endswith("USDT") or "_" in sym:
+        if not sym.endswith("USDT") or "_" in sym or not sym.isascii():
             continue
         try:
             chg = float(r.get("priceChangePercent") or 0)
