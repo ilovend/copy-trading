@@ -212,9 +212,12 @@ class Runner:
                                 pass
                         sig = REG.signal(self.sid, bars, self._plugin_cfg(self.sid))
                         why = str(getattr(mod, "LAST_REJECT", "") or "") if sig is None else ""
-                        if why == "trend_guard":
-                            log(f"SKIP   {symbol:12s} trend_guard 连续4根15m高点抬高且收盘≥60%，跳过")
-                            self.engine._reject(symbol, "trend_guard", "4HH + 收盘≥60%")
+                        if why in ("trend_guard", "volume", "first_pierce", "bb_history"):
+                            label = {"trend_guard": "趋势过滤", "volume": "量能不足",
+                                     "first_pierce": "非首次布林带上穿",
+                                     "bb_history": "布林带历史不足"}.get(why, why)
+                            log(f"SKIP   {symbol:12s} {why} {label}，跳过")
+                            self.engine._reject(symbol, why, label)
                 elif self.sid == "two_stage":
                     stage = self.stages.get(symbol)
                     if stage is None:
