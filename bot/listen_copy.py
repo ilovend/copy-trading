@@ -30,7 +30,11 @@ from pathlib import Path
 
 import websockets
 
-from paths import INSTANCE_ROOT as ROOT
+from paths import APP_ROOT, INSTANCE_ROOT as ROOT
+# Prefer the pure-Python vendored copy shipped in the IPK.
+_vendor = APP_ROOT / "vendor"
+if _vendor.is_dir():
+    sys.path.insert(0, str(_vendor))
 DATA = ROOT / "bot" / "data"
 DATA.mkdir(parents=True, exist_ok=True)
 
