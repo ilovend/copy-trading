@@ -1,0 +1,31 @@
+<%+header%>
+'<style>
+.ct-table-wrap{width:100%;overflow-x:auto}.ct-table-wrap table{min-width:980px}
+@media(max-width:760px){
+ .cbi-value{display:block}
+ .cbi-value-title{display:block;width:auto;text-align:left;padding:0 0 4px}
+ .cbi-value-field{margin-left:0}
+ .cbi-page-actions button,.cbi-section form>button{width:100%}
+}
+</style>'
+<h2 name="content">复制 / 策略总控台</h2>
+<div class="cbi-section">
+	<h3>新建实例</h3>
+	<form method="post" action="">
+		<input type="hidden" name="do" value="create" />
+		<div class="cbi-value"><label class="cbi-value-title">实例名</label><div class="cbi-value-field"><input type="text" name="name" placeholder="a2" class="cbi-input-text" /></div></div>
+		<div class="cbi-value"><label class="cbi-value-title">Web 端口</label><div class="cbi-value-field"><input type="text" name="port" placeholder="留空自动分配" class="cbi-input-text" /></div></div>
+		<div class="cbi-page-actions"><button type="submit" class="cbi-button cbi-button-add">创建实例</button></div>
+	</form>
+	<form method="post" action="" onsubmit="return confirm('只停止所有引擎，不停止配置页，不平仓。')">
+		<input type="hidden" name="do" value="stop_all_engines" />
+		<button type="submit" class="cbi-button cbi-button-reset">一键全停所有引擎</button>
+	</form>
+</div>
+<div class="cbi-section"><h3>实例总览</h3><div class="ct-table-wrap"><%=table_html%></div></div>
+'<div class="cbi-section">
+	<h3>日志 · <%=pcdata(log_instance)%> · <%=pcdata(log_type)%></h3>
+	<pre style="white-space:pre-wrap; max-height:34em; overflow:auto;"><%=pcdata(log)%></pre>
+</div>
+
+<%+footer%>'

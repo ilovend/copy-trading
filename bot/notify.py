@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 
 
 def _log(msg: str) -> None:

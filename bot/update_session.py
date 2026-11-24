@@ -22,7 +22,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 SESSION_PATH = ROOT / "session.json"
 LEGACY_SESSION = ROOT / "probe" / "session.json"
 BASE = "https://www.binance.com"

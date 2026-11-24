@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import APP_ROOT as ROOT
 
 
 def _load_file(path: Path):

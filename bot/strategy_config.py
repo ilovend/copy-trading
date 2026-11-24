@@ -13,7 +13,7 @@ from pathlib import Path
 
 import strategy_registry as REG
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 CONFIG_PATH = ROOT / "gui" / "strategy_config.json"
 
 INTERVALS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h",

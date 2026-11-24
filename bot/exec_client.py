@@ -22,9 +22,10 @@ import threading
 import time
 import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 CONFIG_PATH = ROOT / "gui" / "copy_config.json"
 FAPI = "https://fapi.binance.com"
 
@@ -61,6 +62,29 @@ def load_keys() -> tuple[str, str]:
 
 _CONN: http.client.HTTPSConnection | None = None
 _CONN_LOCK = threading.Lock()
+_TIME_OFFSET_MS = 0
+_TIME_SYNC_AT = 0.0
+_TIME_LOCK = threading.Lock()
+
+
+def _sync_time(force: bool = False) -> int:
+    """Calibrate local clock against Binance /fapi/v1/time."""
+    global _TIME_OFFSET_MS, _TIME_SYNC_AT
+    now = time.time()
+    with _TIME_LOCK:
+        if not force and _TIME_SYNC_AT and now - _TIME_SYNC_AT < 300:
+            return _TIME_OFFSET_MS
+        try:
+            t0 = int(time.time() * 1000)
+            with urllib.request.urlopen(FAPI + "/fapi/v1/time", timeout=5) as r:
+                server = int(json.loads(r.read().decode()).get("serverTime") or 0)
+            t1 = int(time.time() * 1000)
+            if server:
+                _TIME_OFFSET_MS = server - (t0 + t1) // 2
+                _TIME_SYNC_AT = now
+        except Exception:
+            pass
+        return _TIME_OFFSET_MS
 
 
 def _conn() -> http.client.HTTPSConnection:
@@ -83,8 +107,9 @@ def _request(method: str, path: str, params: dict | None = None,
     headers = {"X-MBX-APIKEY": key, "User-Agent": "copy-exec/0.2",
                "Connection": "keep-alive", "Content-Type": "application/x-www-form-urlencoded"}
     if signed:
-        params["timestamp"] = int(time.time() * 1000)
-        params["recvWindow"] = 5000
+        offset = _sync_time()
+        params["timestamp"] = int(time.time() * 1000 + offset)
+        params["recvWindow"] = 20000
         query = urllib.parse.urlencode(params, doseq=True)
         sig = hmac.new(secret.encode(), query.encode(), hashlib.sha256).hexdigest()
         query = f"{query}&signature={sig}"
@@ -105,6 +130,8 @@ def _request(method: str, path: str, params: dict | None = None,
                 body = json.loads(raw.decode())
                 if resp.status >= 400:
                     code = body.get("code") if isinstance(body, dict) else None
+                    if code == -1021:
+                        _sync_time(force=True)
                     hint = {
                         -2015: "IP 不在白名单 / 权限不足 / Key 已过期（检查 API 管理页）",
                         -2014: "API Key 格式错误或不存在",

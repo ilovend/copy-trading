@@ -45,3 +45,6 @@ reports/
 
 # ---- private strategies / presets / local reports ----
 private/
+
+# ---- local archive (contains secrets/config snapshots) ----
+archive/

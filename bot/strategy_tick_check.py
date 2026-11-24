@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 sys.path.insert(0, str(ROOT / "bot"))
 
 from net import http_json  # noqa: E402

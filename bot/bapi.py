@@ -10,7 +10,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 BASE = "https://www.binance.com"
 
 SESSION_PATH = ROOT / "session.json"

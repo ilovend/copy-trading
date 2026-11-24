@@ -18,8 +18,9 @@ import asyncio
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "bot"))
+from paths import INSTANCE_ROOT as ROOT
+from paths import APP_BOT
+sys.path.insert(0, str(APP_BOT))
 
 import listen_copy as L  # noqa: E402
 from copy_engine import CopyEngine  # noqa: E402
@@ -45,9 +46,12 @@ def main() -> None:
           f"其他={cfg.get('slippage_default_pct', 1.5)}%", flush=True)
 
     tokens = L.parse_tokens(args.only)
+    if not tokens:
+        tokens = [str(x) for x in (cfg.get("monitored") or []) if str(x).strip()]
     mode_txt = {"shadow": "影子（只记录）", "live_dry": "干跑（不发送）",
                 "live": "实盘（真实下单）"}.get(exec_mode, exec_mode)
-    L.tg_send(
+    from notify import notify_async
+    notify_async(
         f"🟢 复制已启动 v{__version__}\n"
         f"模式：{mode_txt}\n"
         f"比例：{cfg['ratio_mode']} k={cfg['k']}\n"
@@ -59,7 +63,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        L.tg_send(f"🔴 复制已停止 v{__version__}")
+        notify_async(f"🔴 复制已停止 v{__version__}")
         print("[copy] bye", flush=True)
 
 

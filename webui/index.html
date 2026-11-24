@@ -18,6 +18,7 @@ header{position:sticky;top:0;z-index:5;background:rgba(16,18,21,.96);
   border-bottom:1px solid var(--line);padding:12px 14px;display:flex;flex-wrap:wrap;
   gap:8px;align-items:center;backdrop-filter:blur(8px)}
 h1{font-size:16px;margin:0;font-weight:600;margin-right:auto}
+.header-badges{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-left:auto}
 .badge{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);
   color:var(--muted);white-space:nowrap}
 .badge.live{color:#fff;background:var(--live);border-color:var(--live)}
@@ -89,6 +90,8 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
 @media (max-width:640px){
   header{padding:9px 10px;gap:6px}
   h1{font-size:15px;flex-basis:100%;margin-right:0}
+  .header-badges{order:2;width:100%;margin-left:0;gap:6px}
+  #btnRefresh{order:1;margin-left:auto}
   main{padding:8px;gap:9px}
   .card{padding:10px}
   .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -99,29 +102,61 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
   .cfg-body{padding:10px}
   .sum-sub{white-space:normal;line-height:1.35}
 }
+
+
+/* copy target compact */
+.copy-name{display:inline-block;min-width:130px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.copy-unknown-note{font-size:12px;color:var(--dim);margin-top:7px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.copy-unknown-note button{padding:4px 8px;min-height:28px;font-size:12px}
+@media(max-width:640px){.copy-name{min-width:110px;max-width:150px}}
+
+.copy-table{width:100%;border-collapse:collapse;margin-top:8px}
+.copy-table th{font-size:11px;color:var(--dim);font-weight:500;text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
+.copy-table td{padding:5px 6px;border-bottom:1px solid #222831;vertical-align:middle;white-space:nowrap}
+.copy-table input[type=text]{width:100%;min-width:130px;padding:5px 7px;min-height:32px}
+.copy-table input[type=checkbox]{width:20px;height:20px;min-height:auto;accent-color:var(--accent)}
+.copy-unknown{margin-top:8px}
+.copy-unknown summary{cursor:pointer;color:var(--dim);font-size:12px;padding:5px 0}
+#copyCard .row > button{flex:0 1 auto;width:auto}
+@media(max-width:640px){
+  .copy-table input[type=text]{min-width:110px}
+  #copyCard .row > button{flex:1 1 calc(50% - 4px);width:auto}
+}
+
+/* mobile cockpit */
+@media (max-width:720px){
+  header{padding:8px 10px}
+  h1{font-size:15px}
+  main{padding:8px;gap:9px}
+  .card{padding:10px}
+  .form{grid-template-columns:1fr}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .row{gap:8px}
+  .row > button{flex:1 1 100%}
+  .row > .note{flex-basis:100%}
+  #copyCard .form{grid-template-columns:1fr}
+  table{font-size:12px}
+  th,td{padding:6px 4px;white-space:nowrap}
+}
+@media (max-width:420px){
+  .grid{grid-template-columns:1fr}
+  h1{font-size:14px}
+  .badge{font-size:11px}
+}
 </style>
 </head>
 <body>
 <header>
-  <h1 id="title">策略控制台</h1>
-  <span id="modeBadge" class="badge shadow">--</span>
-  <span id="svcBadge" class="badge">--</span>
+  <h1 id="title">复制 / 策略控制台</h1>
+  <div class="header-badges">
+    <span id="copyHeaderBadge" class="badge">复制 --</span>
+    <span id="modeBadge" class="badge shadow">策略 --</span>
+    <span id="svcBadge" class="badge">策略 --</span>
+  </div>
   <button id="btnRefresh" style="padding:6px 10px;min-height:32px">刷新</button>
 </header>
 <main>
   <div id="err" class="card" style="display:none;border-color:#5a2a2d;color:#ffb4ae"></div>
-
-  <section class="card">
-    <h2>运行状态</h2>
-    <div class="grid">
-      <div class="kv"><span class="k">候选币</span><span class="v" id="universe">--</span></div>
-      <div class="kv"><span class="k">策略持仓</span><span class="v" id="posCount">--</span></div>
-      <div class="kv"><span class="k">WS 延迟</span><span class="v" id="wsAge">--</span></div>
-      <div class="kv"><span class="k">今日已实现</span><span class="v" id="realized">--</span></div>
-      <div class="kv"><span class="k">进程内存</span><span class="v" id="rss">--</span></div>
-      <div class="kv"><span class="k">最后更新</span><span class="v" id="updated" style="font-size:13px">--</span></div>
-    </div>
-  </section>
 
   <section class="card">
     <h2>账户</h2>
@@ -132,6 +167,39 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
     </div>
     <p class="note" id="acctNote"></p>
   </section>
+  <section class="card" id="copyCard">
+    <h2>复制跟单 <span id="copyBadge" class="badge">--</span></h2>
+    <div class="form">
+      <label class="field">模式
+        <select id="copyMode">
+          <option value="shadow">shadow</option><option value="live_dry">live_dry</option><option value="live">live</option>
+        </select>
+      </label>
+      <label class="field">比例模式
+        <select id="copyRatio">
+          <option value="net_equity">net_equity</option><option value="fixed_notional">fixed_notional</option><option value="margin">margin</option>
+        </select>
+      </label>
+      <label class="field">执行权益 U<input id="copyEquity" inputmode="decimal"></label>
+      <label class="field">单笔上限 U<input id="copyMaxOrder" inputmode="decimal"></label>
+      <label class="field">总上限 U<input id="copyMaxTotal" inputmode="decimal"></label>
+      <label class="field">比例 k<input id="copyK" inputmode="decimal"></label>
+      <label class="field">固定名义 U<input id="copyFixed" inputmode="decimal"></label>
+      <label class="field">每笔保证金 U<input id="copyMargin" inputmode="decimal"></label>
+      <label class="field">杠杆<input id="copyLeverage" inputmode="decimal"></label>
+    </div>
+    <div id="copyTargets" class="note" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="copySave">保存复制配置</button>
+      <button id="copyStart">启动复制引擎</button>
+      <button id="copyRestart">重启复制引擎</button>
+      <button id="copyStop">停止复制引擎</button>
+    </div>
+    <p id="copyActionMsg" class="note" style="margin-top:8px;min-height:18px"></p>
+    <h3 style="font-size:12px;color:var(--muted);margin:12px 0 6px">复制日志</h3>
+    <pre id="copyLog" style="max-height:14em;overflow:auto;background:#111;color:#ddd;padding:8px;margin-top:0">加载中…</pre>
+  </section>
+
 
   <section class="card">
     <h2>账户全部持仓 <span id="allPosCount" class="badge">--</span></h2>
@@ -140,6 +208,18 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
       <tbody id="allPosBody"><tr><td colspan="8" class="note">加载中…</td></tr></tbody>
     </table></div>
     <p class="note" id="allPosNote">包含手动仓位和策略仓位；市价平仓会同时撤销该币挂单。</p>
+  </section>
+
+  <section class="card">
+    <h2>自研策略运行状态</h2>
+    <div class="grid">
+      <div class="kv"><span class="k">候选币</span><span class="v" id="universe">--</span></div>
+      <div class="kv"><span class="k">策略持仓</span><span class="v" id="posCount">--</span></div>
+      <div class="kv"><span class="k">WS 延迟</span><span class="v" id="wsAge">--</span></div>
+      <div class="kv"><span class="k">今日已实现</span><span class="v" id="realized">--</span></div>
+      <div class="kv"><span class="k">进程内存</span><span class="v" id="rss">--</span></div>
+      <div class="kv"><span class="k">最后更新</span><span class="v" id="updated" style="font-size:13px">--</span></div>
+    </div>
   </section>
 
   <section class="card">
@@ -178,6 +258,12 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
       <div class="row" style="margin-top:10px">
         <button class="primary" id="btnSaveSession">保存登录态</button>
         <span class="note">写入 .env + session.json；监听进程若在跑需重启才用新会话。</span>
+      </div>
+      <h3>用 cURL 更新登录态（和 PC 端一样）</h3>
+      <label class="field" style="grid-column:1/-1">粘贴浏览器 Copy as cURL（bash/cmd）<textarea id="curlInput" placeholder="粘贴 cURL，解析/cookie/CSRF/UA/portfolioId，并调用 copy-portfolio 校验"></textarea></label>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btnSaveCurl">解析、校验并写入 session.json</button>
+        <span class="note">不会打印完整 cookie；校验通过才覆盖 session.json。</span>
       </div>
 
       <h3>企业微信策略通知</h3>
@@ -316,12 +402,12 @@ function setMode(mode, service) {
   currentMode = mode;
   const m = $('modeBadge');
   m.className = 'badge';
-  if (mode === 'live') { m.classList.add('live'); m.textContent = 'LIVE 实盘'; }
-  else if (mode === 'live_dry') { m.classList.add('dry'); m.textContent = 'DRY 干跑'; }
-  else { m.classList.add('shadow'); m.textContent = 'SHADOW 影子'; }
+  if (mode === 'live') { m.classList.add('live'); m.textContent = '策略 LIVE 实盘'; }
+  else if (mode === 'live_dry') { m.classList.add('dry'); m.textContent = '策略 DRY 干跑'; }
+  else { m.classList.add('shadow'); m.textContent = '策略 SHADOW 影子'; }
   const s = $('svcBadge'); s.className = 'badge';
-  if (service === 'running') { s.classList.add('ok'); s.textContent = '运行中'; }
-  else { s.textContent = service || '未知'; }
+  if (service === 'running') { s.classList.add('ok'); s.textContent = '策略 运行中'; }
+  else { s.textContent = '策略 ' + (service || '未知'); }
   $('liveWarn').classList.toggle('show', mode === 'live');
   $('liveWarnCfg').classList.toggle('show', mode === 'live');
   updateButtons(service);
@@ -409,8 +495,8 @@ async function refresh() {
     const s = st.status || {};
     const cfg = st.config || {};
     const inst = st.instance || '';
-    document.title = (inst ? inst + ' · ' : '') + '策略控制台';
-    $('title').textContent = inst ? `策略控制台 · ${inst}` : '策略控制台';
+    document.title = (inst ? inst + ' · ' : '') + '复制 / 策略控制台';
+    $('title').textContent = `复制 / 策略控制台${inst ? ' · ' + inst : ''}`;
     setMode(cfg.mode || s.mode || 'shadow', st.service);
     setMeta(st.meta);
     $('universe').textContent = s.universe ?? '--';
@@ -595,6 +681,17 @@ $('btnStart').onclick = () => control('start');
 $('btnRestart').onclick = () => control('restart');
 $('btnStop').onclick = () => control('stop');
 $('btnSave').onclick = save;
+async function saveCurl() {
+  const raw = ($('curlInput').value || '').trim();
+  if (!raw) { toast('请先粘贴 cURL', 'err'); return; }
+  try {
+    const d = await api('/api/credentials/curl', {method:'POST', body:JSON.stringify({curl:raw})});
+    toast('登录态已更新：' + (d.message || '校验通过'), 'ok');
+    $('curlInput').value = '';
+    refreshCreds();
+  } catch (e) { toast('cURL 更新失败：' + e.message, 'err'); }
+}
+$('btnSaveCurl').onclick = saveCurl;
 $('btnSaveKeys').onclick = saveKeys;
 $('btnSaveSession').onclick = saveSession;
 $('btnSaveWechat').onclick = saveWechat;
@@ -618,6 +715,168 @@ $('allPosBody').addEventListener('click', async e => {
 
 $('logLines').onchange = refreshLog;
 $('onlyEvents').onchange = refreshLog;
+async function refreshCopyLog() {
+  try {
+    const d = await api('/api/copy/log?lines=120');
+    const el = $('copyLog');
+    const text = d.text || '(暂无复制日志)';
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
+    el.textContent = text;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch (e) {
+    const el = $('copyLog');
+    if (el) el.textContent = '日志读取失败：' + e.message;
+  }
+}
+
+async function refreshCopy() {
+  try {
+    const d = await api('/api/copy/status');
+    const v = d.values || {};
+    const badge = $('copyBadge');
+    badge.textContent = d.service === 'running' ? '运行中' : '已停止';
+    const copyLive = v.mode === 'live';
+    const copyRun = d.service === 'running';
+    badge.className = 'badge ' + (copyRun ? (copyLive ? 'live' : 'dry') : 'shadow');
+    const hb = $('copyHeaderBadge');
+    hb.textContent = '复制 ' + (copyLive ? 'LIVE 实盘' : (v.mode === 'live_dry' ? 'DRY 干跑' : 'SHADOW 影子')) + ' · ' + (copyRun ? '运行中' : '已停止');
+    hb.className = 'badge ' + (copyRun ? (copyLive ? 'live' : 'dry') : 'shadow');
+    $('copyMode').value = v.mode || 'live_dry';
+    $('copyRatio').value = v.ratio_mode || 'net_equity';
+    $('copyEquity').value = v.exec_equity ?? '';
+    $('copyMaxOrder').value = v.max_order_notional ?? '';
+    $('copyMaxTotal').value = v.max_total_notional ?? '';
+    $('copyK').value = v.k ?? '';
+    $('copyFixed').value = v.fixed_notional_usdt ?? '';
+    $('copyMargin').value = v.margin_per_trade ?? '';
+    $('copyLeverage').value = v.leverage ?? '';
+    const box = $('copyTargets');
+    box.innerHTML = '';
+    const names = d.names || {};
+    const monitoredSet = new Set(d.monitored || []);
+    const ids = [...(d.portfolios || d.monitored || [])].sort((a, b) => {
+      const an = !!(names[a] || (d.labels && d.labels[a]));
+      const bn = !!(names[b] || (d.labels && d.labels[b]));
+      return an === bn ? 0 : (an ? -1 : 1);
+    });
+    const known = ids.filter(id => names[id] || (d.labels && d.labels[id]));
+    const unknown = d.hidden_monitored || [];
+    function makeTable(rows) {
+      const table = document.createElement('table');
+      table.className = 'copy-table';
+      table.innerHTML = '<thead><tr><th>组合</th><th>监控</th><th>复制</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      rows.forEach(id => {
+        const tr = document.createElement('tr');
+        const tdName = document.createElement('td');
+        const name = document.createElement('span');
+        name.className = 'copy-name';
+        name.textContent = names[id] || (d.labels && d.labels[id]) || ('未发现 · ' + id.slice(-6));
+        name.title = id;
+        tdName.appendChild(name);
+        const tdMon = document.createElement('td');
+        const mon = document.createElement('input');
+        mon.type = 'checkbox'; mon.className = 'copyMonitored'; mon.dataset.id = id;
+        mon.checked = monitoredSet.has(id);
+        tdMon.appendChild(mon);
+        const tdCopy = document.createElement('td');
+        const cp = document.createElement('input');
+        cp.type = 'checkbox'; cp.className = 'copyTarget'; cp.dataset.id = id;
+        cp.checked = !!(d.targets && d.targets[id] && d.targets[id].enabled);
+        tdCopy.appendChild(cp);
+        tr.append(tdName, tdMon, tdCopy);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      return table;
+    }
+    if (known.length) box.appendChild(makeTable(known));
+    else if (ids.length) box.appendChild(makeTable(ids));
+    if (unknown.length && known.length) {
+      const note = document.createElement('div');
+      note.className = 'copy-unknown-note';
+      note.textContent = '另有 ' + unknown.length + ' 个历史组合当前账户未发现，已隐藏。';
+      const clean = document.createElement('button');
+      clean.type = 'button'; clean.textContent = '清理未发现组合';
+      clean.onclick = async () => {
+        if (!confirm('清理 ' + unknown.length + ' 个未发现组合？只删除配置项，不影响账户。')) return;
+        try {
+          await api('/api/copy/cleanup', {method:'POST', body:'{}'});
+          toast('已清理未发现组合', 'ok'); refreshCopy();
+        } catch (e) { toast('清理失败：' + e.message, 'err'); }
+      };
+      note.appendChild(clean);
+      box.appendChild(note);
+    }
+    const running = d.service === 'running';
+    $('copyStart').disabled = running;
+    $('copyRestart').disabled = !running;
+    $('copyStop').disabled = !running;
+  } catch (e) { /* ignore */ }
+}
+function copyValues() {
+  return {
+    mode: $('copyMode').value,
+    ratio_mode: $('copyRatio').value,
+    exec_equity: Number($('copyEquity').value),
+    max_order_notional: Number($('copyMaxOrder').value),
+    max_total_notional: Number($('copyMaxTotal').value),
+    k: Number($('copyK').value),
+    fixed_notional_usdt: Number($('copyFixed').value),
+    margin_per_trade: Number($('copyMargin').value),
+    leverage: Number($('copyLeverage').value),
+    monitored: [...document.querySelectorAll('.copyMonitored')].filter(cb => cb.checked).map(cb => cb.dataset.id),
+    targets: Object.fromEntries([...document.querySelectorAll('.copyTarget')].map(cb => [cb.dataset.id, cb.checked])),
+  };
+}
+async function saveCopy() {
+  const msg = $('copyActionMsg');
+  try {
+    const values = copyValues();
+    if (values.mode === 'live' && (prompt('复制切到 live，输入 LIVE 确认') || '') !== 'LIVE') {
+      toast('已取消', 'err'); return;
+    }
+    msg.textContent = '保存中…';
+    await api('/api/copy/config', {method:'POST', body:JSON.stringify(values)});
+    await refreshCopy();
+    const running = $('copyStart').disabled; // refreshCopy sets disabled when running
+    msg.textContent = running ? '✅ 配置已保存；运行中的引擎不会热更新，请点「重启复制引擎」应用。' : '✅ 配置已保存。';
+    toast('复制配置已保存', 'ok');
+  } catch (e) {
+    msg.textContent = '❌ 保存失败：' + e.message;
+    toast('复制配置保存失败：' + e.message, 'err');
+  }
+}
+async function copyControl(action) {
+  const msg = $('copyActionMsg');
+  try {
+    if (action === 'start' || action === 'restart') {
+      if ($('copyMode').value === 'live' && (prompt('复制实盘，输入 LIVE 确认') || '') !== 'LIVE') {
+        toast('已取消', 'err'); return;
+      }
+    }
+    const label = {start:'启动', stop:'停止', restart:'重启'}[action] || action;
+    msg.textContent = label + '中…';
+    toast(label + '中…', '');
+    const d = await api('/api/copy/control', {method:'POST', body:JSON.stringify({
+      action, confirm: $('copyMode').value === 'live' ? 'LIVE' : ''
+    })});
+    msg.textContent = '✅ 已' + label + (d.output ? '：' + d.output : '');
+    toast('已' + label, 'ok');
+    await refreshCopy();
+  } catch (e) {
+    msg.textContent = '❌ ' + action + '失败：' + e.message;
+    toast('复制引擎操作失败：' + e.message, 'err');
+  }
+}
+$('copySave').onclick = saveCopy;
+$('copyStart').onclick = () => copyControl('start');
+$('copyRestart').onclick = () => copyControl('restart');
+$('copyStop').onclick = () => copyControl('stop');
+refreshCopy(); refreshCopyLog();
+setInterval(refreshCopy, 5000);
+setInterval(refreshCopyLog, 5000);
+
 refresh(); refreshLog(); refreshFilter(); refreshCreds();
 setInterval(refresh, 3000);
 setInterval(refreshLog, 2500);

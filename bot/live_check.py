@@ -18,7 +18,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 sys.path.insert(0, str(ROOT / "bot"))
 
 import strategy_config as SC  # noqa: E402

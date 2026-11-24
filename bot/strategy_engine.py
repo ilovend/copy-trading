@@ -23,7 +23,7 @@ import symbol_filter as FILTER
 from strategy_basket import BasketMixin
 from strategy_protect import ProtectMixin
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 DATA = Path(os.environ.get("STRATEGY_DATA_DIR") or (ROOT / "bot" / "data"))
 DATA.mkdir(parents=True, exist_ok=True)
 
@@ -32,7 +32,8 @@ INTERVAL_S = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 360
 
 from logutil import log, set_log_file  # noqa: E402
 
-STATE_PATH = Path(__file__).resolve().parent / "data" / "strategy-open.json"
+from paths import BOT_DATA as _BOT_DATA
+STATE_PATH = _BOT_DATA / "strategy-open.json"
 
 
 def ladder_of(trade: dict) -> list[tuple[float, float]]:

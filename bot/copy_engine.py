@@ -22,7 +22,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 DATA = ROOT / "bot" / "data"
 DATA.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = ROOT / "gui" / "copy_config.json"
@@ -231,11 +231,10 @@ class CopyEngine:
         while True:
             text = self._notify_q.get()
             try:
-                from notify import tg_send
-                if not tg_send(text):
-                    log("telegram 未配置或发送失败")
+                from notify import notify_async
+                notify_async(text)
             except Exception as e:  # noqa: BLE001
-                log(f"telegram error: {e}")
+                log(f"notify error: {e}")
 
     def _exec(self):
         if getattr(self, "_ex", None) is None:

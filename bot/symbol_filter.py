@@ -33,8 +33,10 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-PATH = Path(__file__).resolve().parent / "data" / "symbol-filter.json"
-ALL_PATH = Path(__file__).resolve().parent / "data" / "symbols-all.json"
+from paths import BOT_DATA
+
+PATH = BOT_DATA / "symbol-filter.json"
+ALL_PATH = BOT_DATA / "symbols-all.json"
 
 MILD_1H = 25.0
 MILD_15M = 12.0

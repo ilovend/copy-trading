@@ -25,8 +25,9 @@ from collections import Counter, deque
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "bot"))
+from paths import INSTANCE_ROOT as ROOT
+from paths import APP_BOT
+sys.path.insert(0, str(APP_BOT))
 
 import websockets  # noqa: E402
 

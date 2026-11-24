@@ -20,7 +20,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 DATA = ROOT / "bot" / "data"
 FEE_RATE = 0.001          # 往返 0.1%，按名义估算
 

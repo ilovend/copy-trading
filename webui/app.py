@@ -3,7 +3,7 @@
 
 无第三方依赖，只用 stdlib。默认监听 0.0.0.0:8787，HTTP Basic 认证。
 环境变量：
-    CT_ROOT       项目目录，默认 /root/ct-router
+    INSTANCE_ROOT 实例数据目录（服务启动时注入）
     CT_INIT       init 脚本，默认 /etc/init.d/copy-strategy
     WEB_PASSWORD  登录密码（必须设置）
     WEB_PORT      端口，默认 8787
@@ -23,10 +23,14 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(os.environ.get("CT_ROOT", "/root/ct-router")).resolve()
-BOT = ROOT / "bot"
-if str(BOT) not in sys.path:
-    sys.path.insert(0, str(BOT))
+_APP_ROOT = Path(__file__).resolve().parents[1]
+if str(_APP_ROOT / "bot") not in sys.path:
+    sys.path.insert(0, str(_APP_ROOT / "bot"))
+from paths import APP_ROOT, APP_BOT, INSTANCE_ROOT
+ROOT = INSTANCE_ROOT
+BOT = APP_BOT
+
+import update_session as US
 
 def _load_dotenv() -> None:
     path = ROOT / ".env"
@@ -45,7 +49,8 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-INIT = os.environ.get("CT_INIT", "/etc/init.d/copy-strategy")
+INSTANCE_NAME = os.environ.get("INSTANCE_NAME", "")
+INIT = os.environ.get("CT_INIT", f"/etc/init.d/copy-strategy-{INSTANCE_NAME}" if INSTANCE_NAME else "/etc/init.d/copy-strategy")
 PASSWORD = os.environ.get("WEB_PASSWORD", "")
 PORT = int(os.environ.get("WEB_PORT", "8787"))
 INDEX = Path(__file__).resolve().parent / "index.html"
@@ -53,6 +58,21 @@ STATUS = ROOT / "bot" / "data" / "strategy-status.json"
 POSITIONS = ROOT / "bot" / "data" / "strategy-open.json"
 LOG = ROOT / "strategy.log"
 CONFIG = ROOT / "gui" / "strategy_config.json"
+COPY_INIT = os.environ.get("COPY_INIT", f"/etc/init.d/copy-copy-{INSTANCE_NAME}" if INSTANCE_NAME else "/etc/init.d/copy-copy")
+COPY_CONFIG = ROOT / "gui" / "copy_config.json"
+COPY_LOG = ROOT / "copy.log"
+TICKET_FILE = ROOT / "runtime" / "tickets.json"
+SESSION_FILE = ROOT / "runtime" / "sessions.json"
+SESSION_COOKIE = "ct_session"
+COPY_FIELDS = (
+    "mode", "ratio_mode", "exec_equity", "max_order_notional",
+    "max_total_notional", "k", "fixed_notional_usdt",
+    "margin_per_trade", "leverage",
+)
+COPY_NUMERIC = {
+    "exec_equity", "max_order_notional", "max_total_notional", "k",
+    "fixed_notional_usdt", "margin_per_trade", "leverage",
+}
 
 _ACCOUNT = {"t": 0.0, "data": None}
 _LOCK = threading.Lock()
@@ -346,13 +366,147 @@ def snapshot() -> dict:
     }
 
 
+def _tail_file(path: Path, lines: int = 160) -> str:
+    try:
+        data = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return "\n".join(data[-max(1, min(lines, 2000)):])
+    except Exception:
+        return ""
+
+
+def _load_json_file(path: Path, default):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else default
+    except Exception:
+        return default
+
+
+def _save_json_file(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _service_status(init: str) -> str:
+    try:
+        r = subprocess.run([init, "status"], capture_output=True, text=True, timeout=5)
+        return "running" if r.returncode == 0 else "stopped"
+    except Exception:
+        return "unknown"
+
+
+def _portfolio_names() -> dict[str, str]:
+    names: dict[str, str] = {}
+    path = ROOT / "copy.log"
+    if not path.is_file():
+        return names
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return names
+    for line in reversed(lines):
+        m = re.search(r"copy=(\d+)\s+lead=", line)
+        if not m:
+            continue
+        pid = m.group(1)
+        prefix = line[:m.start()]
+        prefix = re.sub(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:,\d+)?\s+", "", prefix)
+        prefix = re.sub(r"^\d{2}:\d{2}:\d{2}\s+", "", prefix)
+        name = prefix.strip()
+        if pid not in names and name and name.lower() not in ("portfolio", "copy"):
+            names[pid] = name
+    return names
+
+
+def _copy_snapshot() -> dict:
+    cfg = _load_json_file(COPY_CONFIG, {})
+    names = _portfolio_names()
+    monitored_all = [str(x) for x in (cfg.get("monitored") or [])]
+    if names:
+        portfolios = list(dict.fromkeys(list(names.keys()) + [x for x in monitored_all if x in names]))
+        hidden = [x for x in monitored_all if x not in names]
+    else:
+        portfolios = monitored_all
+        hidden = []
+    return {
+        "ok": True,
+        "service": _service_status(COPY_INIT),
+        "values": {k: cfg.get(k) for k in COPY_FIELDS},
+        "targets": cfg.get("targets") or {},
+        "portfolios": portfolios,
+        "monitored": monitored_all,
+        "hidden_monitored": hidden,
+        "labels": cfg.get("target_labels") or {},
+        "names": names,
+    }
+
+
+def _cookie_value(header: str, name: str) -> str:
+    for part in (header or "").split(";"):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            if k.strip() == name:
+                return v.strip()
+    return ""
+
+
+def _consume_ticket(raw: str) -> bool:
+    if not raw:
+        return False
+    data = _load_json_file(TICKET_FILE, {})
+    digest = __import__("hashlib").sha256(raw.encode()).hexdigest()
+    item = data.get(digest)
+    if not isinstance(item, dict) or item.get("used"):
+        return False
+    if float(item.get("exp") or 0) < time.time():
+        data.pop(digest, None)
+        _save_json_file(TICKET_FILE, data)
+        return False
+    item["used"] = True
+    _save_json_file(TICKET_FILE, data)
+    return True
+
+
+def _create_session() -> str:
+    token = __import__("secrets").token_urlsafe(32)
+    now = time.time()
+    data = _load_json_file(SESSION_FILE, {})
+    data = {k: v for k, v in data.items() if isinstance(v, dict) and float(v.get("exp", 0)) > now}
+    data[__import__("hashlib").sha256(token.encode()).hexdigest()] = {
+        "exp": now + 7 * 86400, "created": now,
+    }
+    _save_json_file(SESSION_FILE, data)
+    return token
+
+
+def _session_valid(raw: str) -> bool:
+    if not raw:
+        return False
+    data = _load_json_file(SESSION_FILE, {})
+    digest = __import__("hashlib").sha256(raw.encode()).hexdigest()
+    item = data.get(digest)
+    if not isinstance(item, dict):
+        return False
+    if float(item.get("exp") or 0) < time.time():
+        data.pop(digest, None)
+        _save_json_file(SESSION_FILE, data)
+        return False
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "copy-web/1.0"
 
     def log_message(self, fmt, *args):  # noqa: D401
-        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+        msg = fmt % args
+        msg = re.sub(r"ticket=[^&\s\"]+", "ticket=<redacted>", msg)
+        sys.stderr.write("%s - %s\n" % (self.address_string(), msg))
 
     def _authorized(self) -> bool:
+        if _session_valid(_cookie_value(self.headers.get("Cookie", ""), SESSION_COOKIE)):
+            return True
         if not PASSWORD:
             return False
         h = self.headers.get("Authorization", "")
@@ -386,9 +540,29 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf-8") or "{}")
 
     def _same_origin(self) -> bool:
-        return self.headers.get("X-Requested-With") == "copy-webui"
+        if self.headers.get("X-Requested-With") != "copy-webui":
+            return False
+        origin = self.headers.get("Origin", "")
+        if origin:
+            host = self.headers.get("Host", "")
+            if host and not (origin == f"http://{host}" or origin == f"https://{host}"):
+                return False
+        return True
 
     def do_GET(self) -> None:  # noqa: N802
+        from urllib.parse import parse_qs, urlparse
+        parsed = urlparse(self.path)
+        ticket = (parse_qs(parsed.query).get("ticket") or [""])[0]
+        if ticket:
+            if not _consume_ticket(ticket):
+                return self._json({"ok": False, "error": "ticket invalid or expired"}, 403)
+            session = _create_session()
+            self.send_response(302)
+            self.send_header("Set-Cookie", f"{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Lax")
+            self.send_header("Location", "/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if not self._authorized():
             return self._need_auth()
         if self.path == "/" or self.path.startswith("/?"):
@@ -403,6 +577,26 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path.startswith("/api/copy/status"):
+            return self._json(_copy_snapshot())
+        if self.path.startswith("/api/copy/cleanup"):
+            cfg = _load_json_file(COPY_CONFIG, {})
+            names = _portfolio_names()
+            if not names:
+                return self._json({"ok": False, "error": "还没有发现组合昵称，请先启动一次复制引擎"}, 400)
+            keep = set(names)
+            cfg["monitored"] = [x for x in (cfg.get("monitored") or []) if str(x) in keep]
+            old_targets = cfg.get("targets") or {}
+            cfg["targets"] = {k: v for k, v in old_targets.items() if str(k) in keep}
+            cfg.pop("target_labels", None)
+            _save_json_file(COPY_CONFIG, cfg)
+            return self._json({"ok": True, **_copy_snapshot()})
+
+        if self.path.startswith("/api/copy/config"):
+            cfg = _load_json_file(COPY_CONFIG, {})
+            return self._json({"ok": True, "values": {k: cfg.get(k) for k in COPY_FIELDS}})
+        if self.path.startswith("/api/copy/log"):
+            return self._json({"ok": True, "text": _tail_file(COPY_LOG, 160)})
         if self.path.startswith("/api/status"):
             return self._json({"ok": True, **snapshot()})
         if self.path.startswith("/api/log"):
@@ -482,6 +676,69 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 return self._json({"ok": False, "error": str(e)[:220]}, 500)
 
+        if self.path.startswith("/api/copy/config"):
+            cfg = _load_json_file(COPY_CONFIG, {})
+            for key in COPY_FIELDS:
+                if key not in data:
+                    continue
+                if key == "mode":
+                    if str(data[key]) not in ("shadow", "live_dry", "live"):
+                        return self._json({"ok": False, "error": "invalid mode"}, 400)
+                    cfg[key] = str(data[key])
+                elif key == "ratio_mode":
+                    if str(data[key]) not in ("net_equity", "fixed_notional", "margin"):
+                        return self._json({"ok": False, "error": "invalid ratio_mode"}, 400)
+                    cfg[key] = str(data[key])
+                elif key in COPY_NUMERIC:
+                    try:
+                        value = float(data[key])
+                    except (TypeError, ValueError):
+                        return self._json({"ok": False, "error": f"invalid {key}"}, 400)
+                    if value <= 0:
+                        return self._json({"ok": False, "error": f"{key} must be positive"}, 400)
+                    cfg[key] = value
+            if isinstance(data.get("monitored"), list):
+                known = _portfolio_names()
+                allowed = set(cfg.get("monitored") or []) | set(known.keys()) | set((cfg.get("targets") or {}).keys())
+                cfg["monitored"] = [str(x) for x in data["monitored"] if str(x) in allowed]
+            if isinstance(data.get("target_labels"), dict):
+                labels = cfg.get("target_labels") if isinstance(cfg.get("target_labels"), dict) else {}
+                for key, value in data["target_labels"].items():
+                    key = str(key)
+                    text = str(value or "").strip()[:40]
+                    if key in (cfg.get("monitored") or []):
+                        if text:
+                            labels[key] = text
+                        else:
+                            labels.pop(key, None)
+                cfg["target_labels"] = labels
+            if isinstance(data.get("targets"), dict):
+                targets = cfg.get("targets") if isinstance(cfg.get("targets"), dict) else {}
+                for key, enabled in data["targets"].items():
+                    key = str(key)
+                    if key in targets and isinstance(targets[key], dict):
+                        targets[key]["enabled"] = bool(enabled)
+                cfg["targets"] = targets
+            _save_json_file(COPY_CONFIG, cfg)
+            return self._json({"ok": True, **_copy_snapshot()})
+
+        if self.path.startswith("/api/copy/control"):
+            action = str(data.get("action") or "")
+            if action not in ("start", "stop", "restart"):
+                return self._json({"ok": False, "error": "bad action"}, 400)
+            cfg = _load_json_file(COPY_CONFIG, {})
+            if action in ("start", "restart") and str(cfg.get("mode")) == "live" \
+                    and data.get("confirm") != "LIVE":
+                return self._json({"ok": False, "error": "实盘操作需要输入 LIVE 确认"}, 400)
+            try:
+                r = subprocess.run([COPY_INIT, action], capture_output=True, text=True, timeout=20)
+            except Exception as e:  # noqa: BLE001
+                return self._json({"ok": False, "error": str(e)[:160]}, 500)
+            time.sleep(1)
+            return self._json({"ok": r.returncode == 0,
+                               "output": (r.stdout or r.stderr or "")[-300:],
+                               **_copy_snapshot()})
+
         if self.path.startswith("/api/control"):
             action = str(data.get("action") or "")
             if action not in ("start", "stop", "restart"):
@@ -523,6 +780,37 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": False, "error": f"已保存但重启失败: {e}"}, 500)
             return self._json({"ok": True, "restarted": restarted, "test": test,
                                "api_key": credential_status()["api_key"]})
+
+        if self.path.startswith("/api/credentials/curl"):
+            raw = str(data.get("curl") or "")
+            if not raw.strip():
+                return self._json({"ok": False, "error": "cURL 为空"}, 400)
+            try:
+                sess = US.parse_curl(raw)
+            except Exception as e:  # noqa: BLE001
+                return self._json({"ok": False, "error": f"解析失败: {e}"}, 400)
+            if not sess.get("cookie"):
+                return self._json({"ok": False, "error": "没有从 cURL 解析到 cookie"}, 400)
+            old = _load_json_file(US.SESSION_PATH, {})
+            if not sess.get("portfolioId") and old.get("portfolioId"):
+                sess["portfolioId"] = old.get("portfolioId")
+            if not sess.get("user-agent"):
+                sess["user-agent"] = old.get("user-agent", "")
+            ok, msg, pid = US.validate(sess)
+            if not ok:
+                return self._json({"ok": False, "error": msg}, 400)
+            if not sess.get("portfolioId") and pid:
+                sess["portfolioId"] = pid
+            US.SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
+            US.SESSION_PATH.write_text(json.dumps(sess, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.chmod(US.SESSION_PATH, 0o600)
+            parsed = {
+                "cookie_len": len(sess.get("cookie") or ""),
+                "csrftoken": bool(sess.get("csrftoken")),
+                "portfolio_id": bool(sess.get("portfolioId")),
+                "user_agent": bool(sess.get("user-agent")),
+            }
+            return self._json({"ok": True, "message": msg, "parsed": parsed})
 
         if self.path.startswith("/api/credentials/session"):
             cookie = str(data.get("cookie") or "").strip()
@@ -662,8 +950,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     if not PASSWORD:
-        print("WEB_PASSWORD 未设置，拒绝启动", file=sys.stderr)
-        raise SystemExit(2)
+        print("WEB_PASSWORD 未设置，仅允许 ticket/Cookie 登录", file=sys.stderr)
     if not INDEX.exists():
         print(f"缺少 {INDEX}", file=sys.stderr)
         raise SystemExit(2)

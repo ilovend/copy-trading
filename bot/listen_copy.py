@@ -30,7 +30,7 @@ from pathlib import Path
 
 import websockets
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 DATA = ROOT / "bot" / "data"
 DATA.mkdir(parents=True, exist_ok=True)
 
@@ -42,7 +42,7 @@ WS_PATH = "/private/stream"
 # ---------------------------------------------------------------- env / config
 # 通知与环境已抽到 notify.py，这里只做转发，保持旧调用点不变
 from notify import (TG_CHAT, TG_PROXY, TG_TOKEN, load_env,  # noqa: E402,F401
-                    tg_send, tg_send_async)
+                    notify_async, tg_send, tg_send_async)
 
 FALLBACK_PID = os.environ.get("COPY_PORTFOLIO_ID", "")
 
@@ -266,7 +266,7 @@ def handle(msg: dict, pid: str, nickname: str, lead: str | None) -> None:
         except Exception as e:  # noqa: BLE001
             log(f"signal hook error: {e}")
 
-    tg_send_async(text)
+    notify_async(text)
     stats["pushed"] += 1
 
 
@@ -320,7 +320,7 @@ async def stream_portfolio(pf: dict) -> None:
             log(f"stream error [{tag}]: {e}  retry in {backoff}s")
             if fails == 3:
                 await asyncio.to_thread(
-                    tg_send,
+                    notify_async,
                     f"⚠️ 监听中断 {tag}\n{type(e).__name__}: {str(e)[:120]}\n"
                     "多半是网页会话(cookie)过期，需要重新抓取。")
             await asyncio.sleep(backoff)
@@ -347,12 +347,28 @@ async def run(cli_tokens: list[str] | None = None, dry_run: bool = False) -> Non
         sys.exit("筛选结果为空，检查 WATCH_* / --only 的写法")
 
     log(f"watching {len(picked)}/{len(all_pf)}: " + ", ".join(p["nickname"] for p in picked))
+    try:
+        cfg = json.loads((ROOT / "gui" / "copy_config.json").read_text(encoding="utf-8"))
+        by_id = {p["copyPortfolioId"]: p["nickname"] for p in all_pf}
+        monitored = [str(x) for x in (cfg.get("monitored") or [])]
+        enabled = [str(k) for k, v in (cfg.get("targets") or {}).items()
+                   if isinstance(v, dict) and v.get("enabled")]
+        mon_txt = ", ".join(by_id.get(x, x) for x in monitored) or "(全部发现)"
+        cp_txt = ", ".join(by_id.get(x, x) for x in enabled) or "(无)"
+        log(f"监控组合: {mon_txt}")
+        log(f"复制组合: {cp_txt}")
+        only_watch = [by_id.get(p["copyPortfolioId"], p["copyPortfolioId"]) for p in picked
+                      if p["copyPortfolioId"] not in enabled]
+        if only_watch:
+            log("仅监听不复制: " + ", ".join(only_watch))
+    except Exception as e:
+        log(f"读取复制监控/复制配置失败: {e}")
     if dry_run:
         log("dry-run: 不建立连接，直接退出")
         return
 
     await asyncio.to_thread(
-        tg_send,
+        notify_async,
         f"🚀 跟单监听已启动（实时 WS，{len(picked)} 个）\n" +
         "\n".join(f"· {p['nickname']}" for p in picked))
     await asyncio.gather(*(stream_portfolio(p) for p in picked))

@@ -23,7 +23,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 sys.path.insert(0, str(ROOT / "bot"))
 
 import listen_copy as L  # noqa: E402

@@ -27,7 +27,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from paths import INSTANCE_ROOT as ROOT
 sys.path.insert(0, str(ROOT / "bot"))
 
 import bapi  # noqa: E402
