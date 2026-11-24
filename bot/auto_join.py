@@ -22,7 +22,9 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import random
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -88,7 +90,9 @@ def log(msg: str) -> None:
 
 
 def load_config() -> dict:
-    cfg = {"poll_interval": 1.0, "live": False, "defaults": dict(DEFAULT_PARAMS), "targets": {}}
+    cfg = {"poll_interval": 1.0, "live": False, "blind": False,
+           "blind_interval": 0.25, "blind_max_backoff": 5.0,
+           "defaults": dict(DEFAULT_PARAMS), "targets": {}}
     if CONFIG_PATH.exists():
         try:
             cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
@@ -129,12 +133,93 @@ def join(api: Api, lead_id: str, params: dict) -> tuple[bool, str]:
     return False, f"{r.get('code')} {r.get('message')}"
 
 
+def run_blind(api: Api, targets: dict, defaults: dict, live: bool,
+              min_interval: float, max_interval: float, lanes: int,
+              max_backoff: float) -> None:
+    """No slot polling: dual lanes call create continuously.
+
+    Each lane owns its own keep-alive TLS connection. Success/already sets a
+    shared stop event so the other lane stops immediately.
+    """
+    log(f"blind 模式：不轮询收藏，双路 create · {min_interval*1000:.0f}-{max_interval*1000:.0f}ms · {lanes} 路")
+    for lead_id, tcfg in targets.items():
+        nickname = tcfg.get("nickname") or lead_id
+        params = dict(defaults)
+        params.update(tcfg)
+        params.setdefault("investAmount", defaults.get("investAmount", 50))
+        if not live:
+            log(f"[dry-run] 本应加入 {nickname}")
+            continue
+
+        stop = threading.Event()
+        state_lock = threading.Lock()
+        state = {"done": False, "msg": ""}
+        reload_lock = threading.Lock()
+
+        def lane(lane_no: int) -> None:
+            client = Api()
+            attempt = 0
+            while not stop.is_set():
+                ok, msg = join(client, lead_id, params)
+                attempt += 1
+                low = msg.lower()
+                if ok:
+                    with state_lock:
+                        if not state["done"]:
+                            state["done"] = True
+                            state["msg"] = msg
+                            stop.set()
+                            log(f"✅ [{lane_no}] 已加入 {nickname}，投入 {params['investAmount']} U")
+                            L.tg_send_async(
+                                f"✅ 自动跟单成功\n{nickname}\n投入 {params['investAmount']} U")
+                    return
+                if "already" in low or "已跟" in msg or "存在" in msg or "重复" in msg:
+                    with state_lock:
+                        if not state["done"]:
+                            state["done"] = True
+                            state["msg"] = msg
+                            stop.set()
+                            log(f"ℹ️ [{lane_no}] {nickname} 已经在跟单中，停止：{msg}")
+                    return
+
+                if "401" in msg or "403" in msg or "cookie" in low or "csrf" in low:
+                    with reload_lock:
+                        try:
+                            L.load_session()
+                            client.headers = {**bapi.HEADERS, "connection": "keep-alive"}
+                            log(f"⚠️ [{lane_no}] session 已重新加载")
+                        except Exception:
+                            pass
+
+                delay = random.uniform(min_interval, max_interval)
+                if "-1003" in msg or "429" in msg or "too many" in low or "rate" in low:
+                    delay = min(max_backoff, max(delay, min_interval * (2 ** min(attempt, 5))))
+                    log(f"⚠️ [{lane_no}] 限频退避 {delay:.2f}s：{nickname} {msg}")
+                if stop.wait(delay):
+                    return
+                if attempt % 20 == 0:
+                    log(f"… [{lane_no}] {nickname} 已尝试 {attempt} 次：{msg}")
+
+        threads = [threading.Thread(target=lane, args=(i + 1,), daemon=True)
+                   for i in range(max(1, lanes))]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        if state["done"]:
+            log(f"结束 {nickname}：{state['msg']}")
+    log("blind 模式结束")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="只提示不下单")
+    ap.add_argument("--blind", action="store_true", help="不轮询收藏，直接循环 create")
     args = ap.parse_args()
 
     cfg = load_config()
+    if args.blind:
+        cfg["blind"] = True
     live = bool(cfg.get("live")) and not args.dry_run
     interval = max(0.5, float(cfg.get("poll_interval", 1.0) or 1.0))
     targets = cfg.get("targets") or {}
@@ -152,7 +237,15 @@ def main() -> None:
     names = "、".join(t.get("nickname") or k for k, t in targets.items())
     L.tg_send_async(f"🟢 自动跟单已启动（{'实盘' if live else '只提示'}）\n"
               f"监控 {len(targets)} 人：{names}\n"
-              f"每 {interval:g} 秒检查一次名额，出现空位会立刻通知。")
+              f"模式：{'blind 直连抢位' if cfg.get('blind') else '收藏列表轮询'}")
+
+    if cfg.get("blind"):
+        lo = max(0.05, float(cfg.get("blind_interval_min", cfg.get("blind_interval", 0.08)) or 0.08))
+        hi = max(lo, float(cfg.get("blind_interval_max", 0.12) or 0.12))
+        lanes = max(1, int(cfg.get("blind_lanes", 2) or 2))
+        run_blind(api, targets, defaults, live, lo, hi, lanes,
+                  max(0.5, float(cfg.get("blind_max_backoff", 5.0) or 5.0)))
+        return
 
     joined: set[str] = set()
     announced: set[str] = set()

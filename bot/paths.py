@@ -11,9 +11,15 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parents[1]
 APP_BOT = APP_ROOT / "bot"
 APP_WEBUI = APP_ROOT / "webui"
-INSTANCE_ROOT = Path(
-    os.environ.get("INSTANCE_ROOT") or "/root/ct-instances/default"
-).resolve()
+_env_root = os.environ.get("INSTANCE_ROOT")
+if _env_root:
+    INSTANCE_ROOT = Path(_env_root).resolve()
+elif (APP_ROOT / "gui").is_dir():
+    # Windows/local project GUI: data lives beside the repository.
+    INSTANCE_ROOT = APP_ROOT
+else:
+    # Shared router application: per-instance data lives under /root.
+    INSTANCE_ROOT = Path("/root/ct-instances/default").resolve()
 BOT_DATA = INSTANCE_ROOT / "bot" / "data"
 GUI_DIR = INSTANCE_ROOT / "gui"
 ENV_FILE = INSTANCE_ROOT / ".env"
