@@ -277,7 +277,7 @@ def handle(msg: dict, pid: str, nickname: str, lead: str | None) -> None:
 async def keepalive_loop(pid: str, stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
-            await asyncio.wait_for(stop.wait(), timeout=25 * 60)
+            await asyncio.wait_for(stop.wait(), timeout=5 * 60)
             return
         except asyncio.TimeoutError:
             pass
