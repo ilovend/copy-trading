@@ -260,8 +260,8 @@ details.card:not([open]) .live-warn, details.card:not([open]) .cfg-body{display:
         <span class="note">写入 .env + session.json；监听进程若在跑需重启才用新会话。</span>
       </div>
       <h3>用 cURL 更新登录态（和 PC 端一样）</h3>
-      <p class="note" style="margin:0 0 6px">推荐在 DevTools → Network 搜索 <b>get-user-ct-balance</b> 或 <b>copy-portfolio/detail-list</b>，对一条 <b>bapi/futures/v1/private/future/copy-trade/...</b> 请求 Copy as cURL。</p>
-      <label class="field" style="grid-column:1/-1">粘贴浏览器 Copy as cURL（bash/cmd）<textarea id="curlInput" placeholder="粘贴 cURL，解析/cookie/CSRF/UA/portfolioId，并调用 copy-portfolio 校验"></textarea></label>
+      <p class="note" style="margin:0 0 6px">推荐在 DevTools → Network 搜索 <b>get-user-ct-balance</b>，复制这条请求：<br><code>/bapi/futures/v1/private/future/copy-trade/account/get-user-ct-balance</code><br>看不到时再搜 <b>copy-portfolio/detail-list</b>；必须是 <b>bapi/private/copy-trade</b> 请求，不是页面、authcenter 或钱包接口。</p>
+      <label class="field" style="grid-column:1/-1">粘贴浏览器 Copy as cURL（bash/cmd）<textarea id="curlInput" placeholder="粘贴 get-user-ct-balance 或 copy-portfolio/detail-list 的 cURL；必须包含 /bapi/ /private/ /copy-trade/"></textarea></label>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="btnSaveCurl">解析、校验并写入 session.json</button>
         <span class="note">不会打印完整 cookie；校验通过才覆盖 session.json。</span>

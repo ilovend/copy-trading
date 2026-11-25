@@ -826,7 +826,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": "没有从 cURL 解析到 cookie"}, 400)
             url = str(sess.get("url") or "")
             if url and ("/bapi/" not in url or "/private/" not in url or "copy-trade" not in url):
-                return self._json({"ok": False, "error": "请复制包含 /copy-trade/ 的 bapi 私有请求，不要复制钱包、authcenter、页面或 JS 请求"}, 400)
+                return self._json({"ok": False, "error": "请复制 /bapi/futures/v1/private/future/copy-trade/account/get-user-ct-balance（或 copy-portfolio/detail-list）的私有请求；不要复制钱包、authcenter、页面或 JS 请求"}, 400)
             old = _load_json_file(US.SESSION_PATH, {})
             if not sess.get("portfolioId") and old.get("portfolioId"):
                 sess["portfolioId"] = old.get("portfolioId")
