@@ -75,7 +75,9 @@ COPY_NUMERIC = {
 }
 
 _ACCOUNT = {"t": 0.0, "data": None}
+_POSITIONS = {"t": 0.0, "data": None}
 _LOCK = threading.Lock()
+_POS_LOCK = threading.Lock()
 
 # 允许 Web 修改的字段：点路径 -> (类型, 最小值, 最大值)
 FIELDS = {
@@ -304,12 +306,23 @@ def tail_log(n: int = 160, events_only: bool = False) -> list[str]:
 
 def account() -> dict:
     with _LOCK:
-        if time.time() - _ACCOUNT["t"] < 5 and _ACCOUNT["data"] is not None:
+        if time.time() - _ACCOUNT["t"] < 10 and _ACCOUNT["data"] is not None:
             return _ACCOUNT["data"]
     data = {"ok": False, "error": ""}
     try:
         from exec_client import ExecClient
-        data = {"ok": True, **ExecClient().test()}
+        ex = ExecClient()
+        acc = ex.account()
+        active = [p for p in (acc.get("positions") or [])
+                  if abs(float(p.get("positionAmt") or 0)) > 0]
+        data = {
+            "ok": True,
+            "hedge": ex.position_mode(),
+            "equity": float(acc.get("totalMarginBalance") or 0),
+            "wallet": float(acc.get("totalWalletBalance") or 0),
+            "available": float(acc.get("availableBalance") or 0),
+            "positions": len(active),
+        }
     except Exception as e:  # noqa: BLE001
         data["error"] = str(e)[:160]
     with _LOCK:
@@ -319,36 +332,42 @@ def account() -> dict:
 
 def positions_all() -> dict:
     """交易所账户全部持仓，不只策略持仓。"""
-    try:
-        from exec_client import ExecClient
-        ex = ExecClient()
-        hedge = ex.position_mode()
-        strat = read_json(POSITIONS, {})
-        items = []
-        for r in ex.positions():
-            amt = float(r.get("positionAmt") or 0)
-            if abs(amt) <= 0:
-                continue
-            sym = str(r.get("symbol") or "")
-            ps = str(r.get("positionSide") or "BOTH").upper()
-            side = "LONG" if amt > 0 else "SHORT"
-            sp = strat.get(sym) if isinstance(strat, dict) else None
-            items.append({
-                "symbol": sym, "side": side, "position_side": ps,
-                "qty": abs(amt), "entry": float(r.get("entryPrice") or 0),
-                "mark": float(r.get("markPrice") or 0),
-                "unrealized": float(r.get("unRealizedProfit") or 0),
-                "leverage": r.get("leverage"),
-                "notional": abs(float(r.get("notional") or 0)),
-                "liq": float(r.get("liquidationPrice") or 0),
-                "strategy": bool(sp),
-                "strategy_side": (sp or {}).get("side") if sp else "",
-            })
-        items.sort(key=lambda x: (x["symbol"], x["position_side"]))
-        return {"ok": True, "hedge": hedge, "items": items}
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)[:200], "items": [], "hedge": False}
-
+    with _POS_LOCK:
+        if time.time() - _POSITIONS["t"] < 5 and _POSITIONS["data"] is not None:
+            return _POSITIONS["data"]
+        try:
+            from exec_client import ExecClient
+            ex = ExecClient()
+            hedge = ex.position_mode()
+            strat = read_json(POSITIONS, {})
+            items = []
+            for r in ex.positions():
+                amt = float(r.get("positionAmt") or 0)
+                if abs(amt) <= 0:
+                    continue
+                sym = str(r.get("symbol") or "")
+                ps = str(r.get("positionSide") or "BOTH").upper()
+                side = "LONG" if amt > 0 else "SHORT"
+                sp = strat.get(sym) if isinstance(strat, dict) else None
+                items.append({
+                    "symbol": sym, "side": side, "position_side": ps,
+                    "qty": abs(amt), "entry": float(r.get("entryPrice") or 0),
+                    "mark": float(r.get("markPrice") or 0),
+                    "unrealized": float(r.get("unRealizedProfit") or 0),
+                    "leverage": r.get("leverage"),
+                    "notional": abs(float(r.get("notional") or 0)),
+                    "liq": float(r.get("liquidationPrice") or 0),
+                    "strategy": bool(sp),
+                    "strategy_side": (sp or {}).get("side") if sp else "",
+                })
+            items.sort(key=lambda x: (x["symbol"], x["position_side"]))
+            result = {"ok": True, "hedge": hedge, "items": items}
+            _POSITIONS.update(t=time.time(), data=result)
+            return result
+        except Exception as e:  # noqa: BLE001
+            result = {"ok": False, "error": str(e)[:200], "items": [], "hedge": False}
+            _POSITIONS.update(t=time.time(), data=result)
+            return result
 
 def snapshot() -> dict:
     st = read_json(STATUS, {})
@@ -406,7 +425,17 @@ def _portfolio_names() -> dict[str, str]:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception:
         return names
-    for line in reversed(lines):
+    # Only use the latest discovery block. Older blocks are historical and
+    # may contain portfolios that are no longer on the account.
+    start = -1
+    for i in range(len(lines) - 1, -1, -1):
+        if re.search(r"discovered \d+ portfolios:", lines[i]):
+            start = i
+            break
+    block = lines[start + 1:] if start >= 0 else lines
+    for line in block:
+        if "watching " in line:
+            break
         m = re.search(r"copy=(\d+)\s+lead=", line)
         if not m:
             continue

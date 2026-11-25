@@ -92,7 +92,7 @@ def discover_portfolios() -> list[dict]:
         rows = j.get("data") or []
     except Exception as e:  # noqa: BLE001
         log(f"discover failed: {e}")
-        rows = []
+        raise
     out = []
     for x in rows:
         if x.get("status") not in (None, "ACTIVE"):
@@ -335,20 +335,48 @@ async def run(cli_tokens: list[str] | None = None, dry_run: bool = False) -> Non
     load_session()
     await asyncio.to_thread(calibrate_clock)
     asyncio.create_task(clock_loop())
-    all_pf = await asyncio.to_thread(discover_portfolios)
-    if not all_pf:
-        sys.exit("no copy portfolio found")
+
+    warned = False
+    while True:
+        try:
+            all_pf = await asyncio.to_thread(discover_portfolios)
+        except Exception as e:  # noqa: BLE001
+            if not warned:
+                log(f"session/接口不可用，等待更新 cURL：{e}")
+                await asyncio.to_thread(
+                    notify_async,
+                    "⚠️ 复制已暂停：Binance 登录态失效。\n"
+                    "请到 a1 驾驶舱粘贴新的 cURL，进程会自动恢复，不需要重启服务。")
+                warned = True
+            await asyncio.sleep(10)
+            await asyncio.to_thread(reload_session_if_changed)
+            continue
+
+        if not all_pf:
+            log("未发现跟单组合，10 秒后重试")
+            await asyncio.sleep(10)
+            await asyncio.to_thread(reload_session_if_changed)
+            continue
+
+        picked, unmatched = select_portfolios(all_pf, cli_tokens or [])
+        if not picked:
+            if not warned:
+                log(f"筛选结果为空，等待配置/会话恢复；未匹配={unmatched}")
+                warned = True
+            await asyncio.sleep(10)
+            await asyncio.to_thread(reload_session_if_changed)
+            continue
+        break
+
+    warned = False
     log(f"discovered {len(all_pf)} portfolios:")
     for pf in all_pf:
         log(f"  {pf['nickname']:20s} copy={pf['copyPortfolioId']} lead={pf['leadPortfolioId']} "
             f"net={pf['netCopyAmount']} margin={pf['marginBalance']}")
 
-    picked, unmatched = select_portfolios(all_pf, cli_tokens or [])
     if unmatched:
         log(f"WARN 未匹配到: {unmatched}")
         log(f"     可选: {[p['nickname'] for p in all_pf]}")
-    if not picked:
-        sys.exit("筛选结果为空，检查 WATCH_* / --only 的写法")
 
     log(f"watching {len(picked)}/{len(all_pf)}: " + ", ".join(p["nickname"] for p in picked))
     try:

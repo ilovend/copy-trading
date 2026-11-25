@@ -454,7 +454,10 @@ function readValues() {
   if (n !== '') { out['trade.notional'] = n; out['basket.notional'] = n; }
   return out;
 }
+let positionsBusy = false;
 async function refreshAllPositions() {
+  if (positionsBusy) return;
+  positionsBusy = true;
   try {
     const d = await api('/api/positions');
     const rows = d.items || [];
@@ -486,6 +489,8 @@ async function refreshAllPositions() {
   } catch (e) {
     $('allPosCount').textContent = '--';
     $('allPosNote').textContent = '读取持仓失败：' + e.message;
+  } finally {
+    positionsBusy = false;
   }
 }
 
@@ -527,7 +532,6 @@ async function refresh() {
     $('exPos').textContent = a.ok ? (a.positions ?? 0) : '--';
     $('acctNote').textContent = a.ok ? `${a.hedge ? '双向' : '单向'}持仓` : (a.error || '');
   } catch (e) { /* ignore */ }
-  await refreshAllPositions();
 }
 async function refreshCreds() {
   try {
@@ -877,8 +881,9 @@ refreshCopy(); refreshCopyLog();
 setInterval(refreshCopy, 5000);
 setInterval(refreshCopyLog, 5000);
 
-refresh(); refreshLog(); refreshFilter(); refreshCreds();
+refresh(); refreshAllPositions(); refreshLog(); refreshFilter(); refreshCreds();
 setInterval(refresh, 3000);
+setInterval(refreshAllPositions, 8000);
 setInterval(refreshLog, 2500);
 setInterval(refreshFilter, 15000);
 setInterval(refreshCreds, 30000);
