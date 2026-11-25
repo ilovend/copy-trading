@@ -15,7 +15,7 @@ python -m pip install websockets
 :: 2. 配置
 copy .env.example .env      :: 填 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
 
-:: 3. 会话（2-3 天一次）
+:: 3. 会话（按需更新；推荐 get-user-ct-balance）
 python bot\update_session.py --clipboard
 
 :: 4. 启动
@@ -90,6 +90,6 @@ connected [星辰社区-意钦(581121)]
 
 ## 维护
 
-- **cookie 过期**（2–3 天）：`python bot\update_session.py --clipboard`，程序自动重载
+- **登录态更新**：优先从 `get-user-ct-balance` 或 `copy-portfolio/detail-list` 复制 cURL，再运行 `python bot\update_session.py --clipboard`；详见 `docs/登录态更新.md`
 - **新增/取消跟单**：重启一次（组合在启动时发现）
 - **Telegram 慢**：在 `.env` 配 `TELEGRAM_PROXY=http://127.0.0.1:7890`

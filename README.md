@@ -43,13 +43,14 @@ python gui\启动.bat
 
 首次使用三步：
 
-1. **仓位监控** 页点「更新登录态」，按弹窗提示从浏览器复制 cURL
+1. **仓位监控** 页点「更新登录态」，按 [docs/登录态更新.md](docs/登录态更新.md) 从浏览器复制 `get-user-ct-balance` 或 `copy-portfolio/detail-list` 的 cURL
 2. **仓位推送** 页填 Bot Token / Chat ID → 测试发送 → 保存
 3. 列表里点「监控 / 复制」勾选 → 点「启动」
 
 实盘还需要：点顶栏 **「账户配置」** 填 API Key / Secret（只存 `.env`），
 点「测试连接」确认权益与持仓模式。复制与自研策略共用这一组 Key。
 
+> 登录态与 cURL 复制方式见 [docs/登录态更新.md](docs/登录态更新.md)。
 > 更新内容见 [CHANGELOG.md](CHANGELOG.md)。
 > **币安接口变更（WS 入口、条件单等）见 [docs/API-CHANGES.md](docs/API-CHANGES.md)**，升级出问题先对照它。
 

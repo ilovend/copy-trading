@@ -825,8 +825,8 @@ class Handler(BaseHTTPRequestHandler):
             if not sess.get("cookie"):
                 return self._json({"ok": False, "error": "没有从 cURL 解析到 cookie"}, 400)
             url = str(sess.get("url") or "")
-            if url and "/bapi/" not in url:
-                return self._json({"ok": False, "error": "请复制 bapi/... 私有请求，不要复制页面或 JS 请求"}, 400)
+            if url and ("/bapi/" not in url or "/private/" not in url or "copy-trade" not in url):
+                return self._json({"ok": False, "error": "请复制包含 /copy-trade/ 的 bapi 私有请求，不要复制钱包、authcenter、页面或 JS 请求"}, 400)
             old = _load_json_file(US.SESSION_PATH, {})
             if not sess.get("portfolioId") and old.get("portfolioId"):
                 sess["portfolioId"] = old.get("portfolioId")
@@ -850,10 +850,7 @@ class Handler(BaseHTTPRequestHandler):
                 "has_challenge_token": has_challenge,
                 "private_url": bool(url and "/bapi/" in url),
             }
-            warning = "" if has_challenge else (
-                "当前 Cookie 没有 bnc-challenge-token，可能是短会话；"
-                "请重新登录后从 Network 复制 bapi/... 私有请求"
-            )
+            warning = ""
             return self._json({"ok": True, "message": msg, "parsed": parsed, "warning": warning})
 
         if self.path.startswith("/api/credentials/session"):
