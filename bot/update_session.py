@@ -64,6 +64,7 @@ def parse_curl(text: str) -> dict:
     headers: dict[str, str] = {}
     cookie = None
     body = None
+    url = None
     i = 0
     while i < len(tokens):
         t = tokens[i]
@@ -84,6 +85,12 @@ def parse_curl(text: str) -> dict:
             body = nxt.strip()
             i += 2
             continue
+        if t in ("--url",) and nxt is not None:
+            url = nxt.strip()
+            i += 2
+            continue
+        if t.lower().startswith(("http://", "https://")):
+            url = t.strip()
         i += 1
 
     portfolio_id = None
@@ -97,6 +104,8 @@ def parse_curl(text: str) -> dict:
         sess["cookie"] = cookie
     if portfolio_id:
         sess["portfolioId"] = portfolio_id
+    if url:
+        sess["url"] = url
     return sess
 
 

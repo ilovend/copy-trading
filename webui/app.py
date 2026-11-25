@@ -152,9 +152,11 @@ def upsert_env(pairs: dict) -> None:
 def credential_status() -> dict:
     key = os.environ.get("EXEC_API_KEY", "").strip()
     secret = os.environ.get("EXEC_API_SECRET", "").strip()
-    cookie = os.environ.get("BINANCE_COOKIE", "").strip()
-    csrf = os.environ.get("BINANCE_CSRFTOKEN", "").strip()
     webhook = os.environ.get("WECHAT_WEBHOOK", "").strip()
+    sess = _load_json_file(US.SESSION_PATH, {})
+    cookie = str(sess.get("cookie") or os.environ.get("BINANCE_COOKIE", "")).strip()
+    csrf = str(sess.get("csrftoken") or os.environ.get("BINANCE_CSRFTOKEN", "")).strip()
+    has_challenge = "bnc-challenge-token" in cookie
     wx_hint = ""
     if webhook:
         try:
@@ -171,6 +173,8 @@ def credential_status() -> dict:
         "ua": bool(os.environ.get("BINANCE_UA", "").strip()),
         "has_wechat": bool(webhook),
         "wechat_hint": wx_hint,
+        "cookie_len": len(cookie),
+        "has_challenge_token": has_challenge,
     }
 
 
@@ -820,6 +824,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": f"解析失败: {e}"}, 400)
             if not sess.get("cookie"):
                 return self._json({"ok": False, "error": "没有从 cURL 解析到 cookie"}, 400)
+            url = str(sess.get("url") or "")
+            if url and "/bapi/" not in url:
+                return self._json({"ok": False, "error": "请复制 bapi/... 私有请求，不要复制页面或 JS 请求"}, 400)
             old = _load_json_file(US.SESSION_PATH, {})
             if not sess.get("portfolioId") and old.get("portfolioId"):
                 sess["portfolioId"] = old.get("portfolioId")
@@ -833,13 +840,21 @@ class Handler(BaseHTTPRequestHandler):
             US.SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
             US.SESSION_PATH.write_text(json.dumps(sess, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             os.chmod(US.SESSION_PATH, 0o600)
+            cookie = str(sess.get("cookie") or "")
+            has_challenge = "bnc-challenge-token" in cookie
             parsed = {
-                "cookie_len": len(sess.get("cookie") or ""),
+                "cookie_len": len(cookie),
                 "csrftoken": bool(sess.get("csrftoken")),
                 "portfolio_id": bool(sess.get("portfolioId")),
                 "user_agent": bool(sess.get("user-agent")),
+                "has_challenge_token": has_challenge,
+                "private_url": bool(url and "/bapi/" in url),
             }
-            return self._json({"ok": True, "message": msg, "parsed": parsed})
+            warning = "" if has_challenge else (
+                "当前 Cookie 没有 bnc-challenge-token，可能是短会话；"
+                "请重新登录后从 Network 复制 bapi/... 私有请求"
+            )
+            return self._json({"ok": True, "message": msg, "parsed": parsed, "warning": warning})
 
         if self.path.startswith("/api/credentials/session"):
             cookie = str(data.get("cookie") or "").strip()
